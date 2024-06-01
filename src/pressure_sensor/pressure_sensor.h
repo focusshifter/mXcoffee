@@ -7,12 +7,13 @@
 
 class PressureSensor {
   public:
-    PressureSensor();
-    void start();
+    PressureSensor(m5::I2C_Class * i2c_wire);
     int16_t getPressure();
-    void stop();
-
     int16_t getMaxPressure();
+    String getHexData();
   private:
+    float getRealPressure();
+    String hex_data;
+    m5::I2C_Class * wire;
     int16_t pressure;
 };

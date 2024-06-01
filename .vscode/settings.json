@@ -3,6 +3,11 @@
         "deque": "cpp",
         "string": "cpp",
         "vector": "cpp",
-        "list": "cpp"
+        "list": "cpp",
+        "array": "cpp",
+        "string_view": "cpp",
+        "cmath": "cpp",
+        "chrono": "cpp",
+        "new": "cpp"
     }
 }
