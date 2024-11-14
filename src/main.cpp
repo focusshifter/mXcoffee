@@ -104,7 +104,7 @@ void initBle() {
     blePressure = new OEPPressure();
 
     // Pretend that we're PRS-compatible device by name
-    BLEDevice::init("PRS-m5flair");
+    BLEDevice::init("PRS-mXcoffee");
 
     deviceState.pServer = BLEDevice::createServer();
     deviceState.pServer->setCallbacks(new MyServerCallbacks());
