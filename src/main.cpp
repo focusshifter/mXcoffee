@@ -64,7 +64,15 @@ class MyServerCallbacks: public BLEServerCallbacks {
 };
 
 void setup() {
-  M5.begin();
+  auto cfg = M5.config();
+  cfg.serial_baudrate = 115200;   // default=115200. if "Serial" is not needed, set it to 0.
+  cfg.internal_imu = true;        // default=true. use internal IMU.
+  cfg.internal_rtc = true;        // default=true. use internal RTC.
+  cfg.internal_spk = true;        // default=true. use internal speaker.
+  cfg.internal_mic = false;       // default=true. use internal microphone.
+  cfg.external_imu = false;       // default=false. use Unit Accel & Gyro.
+  cfg.external_rtc = false;       // default=false. use Unit RTC.
+  M5.begin(cfg);
   M5.Speaker.begin();
   M5.Speaker.setVolume(120);
   display = M5.Lcd;
@@ -139,7 +147,7 @@ int16_t getPressure() {
 #ifdef DEBUG
     Serial.println("Debug: generating fake pressure");
 
-    double normalized_time = 2.0 * M_PI * (lgfx::millis() / 10000.0);
+    double normalized_time = 2.0 * M_PI * (M5.millis() / 10000.0);
     double sin_value = sin(normalized_time - M_PI / 2);
     
     int16_t pressure = int16_t(round(0.5 * (sin_value + 1.0) * 15000));
@@ -323,14 +331,14 @@ void playBtOffSound() {
 
 void updateShotTotalTime() {
   if (deviceState.isTimerRunning) {
-    unsigned long currentTime = lgfx::millis();
+    unsigned long currentTime = M5.millis();
     deviceState.shotTotalTime += currentTime - deviceState.timerStartTime;
     deviceState.timerStartTime = currentTime; // Reset start time for next interval
   }
 }
 
 void setTimer(int16_t pressure) {
-  unsigned long currentTime = lgfx::millis();
+  unsigned long currentTime = M5.millis();
 
   if (pressure > 1000) {
     if (!deviceState.isTimerRunning) {
@@ -356,8 +364,8 @@ void loop() {
   M5.delay(2);
   M5.update();
 
-  if (deviceState.lastRefreshTime + 20 < lgfx::millis()) {
-    deviceState.lastRefreshTime = lgfx::millis();
+  if (deviceState.lastRefreshTime + 20 < M5.millis()) {
+    deviceState.lastRefreshTime = M5.millis();
 
     int16_t pressure = getPressure();
 
