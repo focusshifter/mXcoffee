@@ -13,6 +13,10 @@
 
 #include <Wire.h>
 
+// Pressure grid values
+const int16_t PRESSURE_GRID_VALUES[] = {9, 6, 3, 0};
+const int16_t PRESSURE_GRID_COUNT = 4;
+
 M5GFX display;
 PressureSensor *pressureSensor;
 
@@ -143,14 +147,17 @@ void deinitBle() {
 }
 
 int16_t getPressure() {
-
 #ifdef DEBUG
-    Serial.println("Debug: generating fake pressure");
-
-    double normalized_time = 2.0 * M_PI * (M5.millis() / 10000.0);
-    double sin_value = sin(normalized_time - M_PI / 2);
+    static uint32_t lastTime = 0;
+    static int16_t pressure = 0;
     
-    int16_t pressure = int16_t(round(0.5 * (sin_value + 1.0) * 15000));
+    // Update pressure less frequently
+    if (M5.millis() - lastTime > 50) {  // Update every 50ms instead of every call
+        lastTime = M5.millis();
+        double normalized_time = 2.0 * M_PI * (M5.millis() / 10000.0);
+        double sin_value = sin(normalized_time - M_PI / 2);
+        pressure = int16_t(round(0.5 * (sin_value + 1.0) * 15000));
+    }
 #else
     int16_t pressure = pressureSensor->getPressure();
 #endif
@@ -182,6 +189,12 @@ void drawGraph() {
   const int16_t graphHeight = display.height() - graphStartY - 10;
   const int16_t graphWidth = display.width() - graphStartX * 2;
   
+  static M5Canvas graph(&display);  // Make the canvas static so it's not recreated every time
+
+  if (!graph.width()) {  // Only create sprite once
+    graph.createSprite(display.width(), display.height());
+  }
+
   int16_t lastPressure = pressureValues[PRESSURE_VALUES_LEN - 1];
   String hex_data = pressureSensor->getHexData();
 
@@ -201,17 +214,16 @@ void drawGraph() {
 
   int16_t minPressure = 0;
   int16_t maxSensorPressure = pressureSensor->getMaxPressure(); // 20000 mbar
-  int16_t maxPressure = maxSensorPressure - 5000; // 15000 mbar
+  int16_t maxPressure = maxSensorPressure - 10000; // 10000 mbar
 
   int16_t minPressureY = graphStartY + graphHeight;
   int16_t maxPressureY = graphStartY;
   
-  M5Canvas graph(&display);
-
-  graph.createSprite(display.width(), display.height());
-
   graph.fillSprite(TFT_BLACK);
 
+  // Set default font for grid and status
+  graph.setFont(&fonts::DejaVu12);
+  
   // Draw BT state
   if (deviceState.isBluetoothOn) {
     if (deviceState.lastBTSendSuccessful) {
@@ -237,15 +249,19 @@ void drawGraph() {
   }
   graph.drawRightString(String(batteryLevel) + "%", display.width() - 10, 10);
 
-  graph.drawLine(graphStartX, maxPressureY, graphStartX + graphWidth, maxPressureY, TFT_WHITE);
-  graph.drawLine(graphStartX, minPressureY, graphStartX + graphWidth, minPressureY, TFT_WHITE);
+  // Top and bottom graph pressure lines
+  // graph.drawLine(graphStartX, maxPressureY, graphStartX + graphWidth, maxPressureY, TFT_WHITE);
+  // graph.drawLine(graphStartX, minPressureY, graphStartX + graphWidth, minPressureY, TFT_WHITE);
 
-  graph.setTextColor(TFT_WHITE);
+  graph.setTextColor(TFT_DARKGREY);
 
-  for (int i = 0; i < 6; i++) {
-    int16_t pressureY = graphStartY + graphHeight - i * graphHeight / 5;
-    graph.drawLine(graphStartX, pressureY, graphStartX + graphWidth, pressureY, TFT_DARKGRAY);
-    graph.drawString(String(i * maxPressure / 5 / 1000), 0, pressureY);
+  // Define darker gray (about half as bright as TFT_DARKGRAY)
+  const uint16_t TFT_VERY_DARK_GRAY = 0x3186;  // RGB(24,24,24)
+
+  for (int i = 0; i < PRESSURE_GRID_COUNT; i++) {
+    int16_t pressureY = graphStartY + (10 - PRESSURE_GRID_VALUES[i]) * graphHeight / 10;
+    graph.drawLine(graphStartX, pressureY, graphStartX + graphWidth, pressureY, TFT_VERY_DARK_GRAY);
+    graph.drawString(String(PRESSURE_GRID_VALUES[i]), 0, pressureY - 5);
   }
 
   for (int i = 1; i < PRESSURE_VALUES_LEN; i++) {
@@ -258,8 +274,11 @@ void drawGraph() {
     graph.drawLine(pressureX1, pressureY1, pressureX2, pressureY2, graphColor);
   }
 
-  // Screen header
+  // Switch to larger font for main display
   graph.setFont(&DejaVu40);
+
+  // Screen header
+  // graph.setFont(&DejaVu40);
 
   // Draw pressure in bar
   graph.setTextColor(graphColor);
@@ -278,7 +297,7 @@ void drawGraph() {
 
   if (deviceState.debugMode) {
     graph.setTextColor(TFT_WHITE, TFT_BLACK);
-    graph.setFont(&DejaVu12);
+    graph.setFont(&fonts::DejaVu12);
     graph.drawString("Pressure (bar): " + String(float(lastPressure) / 1000), 40, display.height()-60);
     graph.drawString("Last refresh: " + String(deviceState.lastRefreshTime), 40, display.height()-90);
     graph.drawString("Sensor raw data: " + hex_data, 40, display.height() - 30);
