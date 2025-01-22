@@ -5,6 +5,8 @@ import platform
 import stat
 import urllib.request
 import json
+import zipfile
+import tempfile
 
 print("Package script loaded!")  # Debug print
 
@@ -69,28 +71,54 @@ def get_latest_esptool_url():
         with urllib.request.urlopen(api_url) as response:
             data = json.loads(response.read())
             for asset in data['assets']:
-                if asset['name'].endswith('win64.exe'):
+                if asset['name'].endswith('-win64.zip'):
                     return asset['browser_download_url']
-        raise Exception("Could not find win64.exe in latest release")
+        raise Exception("Could not find win64.zip in latest release")
     except Exception as e:
         print(f"Error getting latest release: {e}")
         # Fallback to known good version
-        return "https://github.com/espressif/esptool/releases/download/v4.7.0/esptool-v4.7.0-win64.exe"
+        return "https://github.com/espressif/esptool/releases/download/v4.7.0/esptool-v4.7.0-win64.zip"
 
 def copy_esptool(dist_dir):
-    if platform.system() == "Windows":
-        # For Windows, download the latest prebuilt esptool.exe
-        esptool_url = get_latest_esptool_url()
-        dest_path = os.path.join(dist_dir, "esptool.exe")
+    success = True
+    messages = []
+
+    # Download Windows esptool.exe
+    esptool_url = get_latest_esptool_url()
+    
+    # Create a temporary directory for ZIP extraction
+    with tempfile.TemporaryDirectory() as temp_dir:
+        zip_path = os.path.join(temp_dir, "esptool.zip")
         try:
-            download_file(esptool_url, dest_path)
-            print(f"Successfully downloaded esptool.exe")
+            # Download the ZIP file
+            print(f"Downloading esptool ZIP from {esptool_url}")
+            download_file(esptool_url, zip_path)
+            
+            # Extract the ZIP
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+            
+            # Find and copy esptool.exe from the extracted contents, looking in esptool-win64 subdir
+            esptool_path = None
+            for root, _, files in os.walk(temp_dir):
+                if "esptool-win64" in root and "esptool.exe" in files:
+                    esptool_path = os.path.join(root, "esptool.exe")
+                    break
+            
+            if esptool_path:
+                dest_path = os.path.join(dist_dir, "esptool.exe")
+                shutil.copy2(esptool_path, dest_path)
+                print(f"Successfully copied esptool.exe to {dest_path}")
+            else:
+                success = False
+                messages.append("Could not find esptool.exe in esptool-win64 directory of the downloaded ZIP")
         except Exception as e:
-            print(f"Error downloading esptool.exe: {e}")
-            return False, ""
-    else:
-        # For Linux/Mac, create a wrapper script that uses pip-installed esptool
-        wrapper_path = os.path.join(dist_dir, "esptool")
+            success = False
+            messages.append(f"Error processing esptool ZIP: {e}")
+
+    # Create Unix wrapper script
+    wrapper_path = os.path.join(dist_dir, "esptool")
+    try:
         with open(wrapper_path, 'w') as f:
             f.write('''#!/bin/bash
 # This script requires esptool to be installed via pip
@@ -98,13 +126,15 @@ def copy_esptool(dist_dir):
 esptool.py "$@"''')
         st = os.stat(wrapper_path)
         os.chmod(wrapper_path, st.st_mode | stat.S_IEXEC)
-        
-        return True, '''Note for Linux/Mac users:
+        messages.append('''Note for Linux/Mac users:
 This script requires esptool to be installed via pip. Install it with:
 pip install esptool
+''')
+    except Exception as e:
+        success = False
+        messages.append(f"Error creating Unix wrapper script: {e}")
 
-'''
-    return True, ""
+    return success, "\n".join(messages)
 
 def before_build(source, target, env):
     print("Before build called!")  # Debug print
