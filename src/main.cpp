@@ -17,6 +17,9 @@
 const int16_t PRESSURE_GRID_VALUES[] = {9, 6, 3, 0};
 const int16_t PRESSURE_GRID_COUNT = 4;
 
+// Auto-off timer duration (10 minutes in milliseconds)
+const unsigned long AUTO_OFF_TIMEOUT = 10 * 60 * 1000;
+
 M5GFX display;
 PressureSensor *pressureSensor;
 
@@ -31,6 +34,8 @@ struct DeviceState {
     bool lastBTSendSuccessful;
     bool debugMode;
     unsigned long lastRefreshTime;
+    unsigned long lastActivityTime;  // Track last activity time
+    int16_t lastPressure;           // Track last pressure reading
 
     unsigned long timerStartTime;   // Timer start time
     unsigned long shotTotalTime;    // Total shot time
@@ -46,6 +51,8 @@ DeviceState deviceState = {
     .lastBTSendSuccessful = false,
     .debugMode = false,
     .lastRefreshTime = 0,
+    .lastActivityTime = 0,
+    .lastPressure = -1,
     .pServer = nullptr
 };
 
@@ -298,9 +305,19 @@ void drawGraph() {
   if (deviceState.debugMode) {
     graph.setTextColor(TFT_WHITE, TFT_BLACK);
     graph.setFont(&fonts::DejaVu12);
-    graph.drawString("Pressure (bar): " + String(float(lastPressure) / 1000), 40, display.height()-60);
-    graph.drawString("Last refresh: " + String(deviceState.lastRefreshTime), 40, display.height()-90);
-    graph.drawString("Sensor raw data: " + hex_data, 40, display.height() - 30);
+
+    std::vector<String> debugStrings = {
+      "Last refresh: " + String(deviceState.lastRefreshTime),
+      "Sensor raw data: " + hex_data,
+      "Pressure (bar): " + String(float(lastPressure) / 1000),
+      "Shot timer state: " + String(deviceState.isTimerRunning) + " (" + String(deviceState.shotTotalTime / 1000) + "s)",
+      "Auto-off / timer set at: " + String(deviceState.lastActivityTime / 1000) + "s",
+      "Auto-off / shutdown in: " + String((deviceState.lastActivityTime + AUTO_OFF_TIMEOUT - deviceState.lastRefreshTime) / 1000) + "s"
+    };
+
+    for (int i = 0; i < debugStrings.size(); i++) {
+      graph.drawString(debugStrings[i], 40, 60 + i * 20);
+    }
   }
 
   display.startWrite(); 
@@ -335,17 +352,21 @@ void i2c_scan() {
 }
 
 void playBtOnSound() {
-  M5.Speaker.tone(660, 100, -1, true);
-  M5.delay(100);
-  M5.Speaker.tone(880, 100, -1, true);
-  M5.delay(100);
+  return;
+
+  // M5.Speaker.tone(660, 100, -1, true);
+  // M5.delay(100);
+  // M5.Speaker.tone(880, 100, -1, true);
+  // M5.delay(100);
 }
 
 void playBtOffSound() {
-  M5.Speaker.tone(880, 100, -1, true);
-  M5.delay(100);
-  M5.Speaker.tone(660, 100, -1, true);
-  M5.delay(100);
+  return;
+
+  // M5.Speaker.tone(880, 100, -1, true);
+  // M5.delay(100);
+  // M5.Speaker.tone(660, 100, -1, true);
+  // M5.delay(100);
 }
 
 void updateShotTotalTime() {
@@ -378,19 +399,35 @@ void setTimer(int16_t pressure) {
 }
 
 void loop() {
-  // i2c_scan();
+  M5.update();
+  
+  // Update last activity time when there's any button press
+  if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnC.wasPressed()) {
+    deviceState.lastActivityTime = millis();
+  }
+  
+  // Check for inactivity timeout
+  if (!deviceState.isAsleep && (millis() - deviceState.lastActivityTime >= AUTO_OFF_TIMEOUT)) {
+    M5.Power.powerOff();
+    return;
+  }
 
   M5.delay(2);
-  M5.update();
 
   if (deviceState.lastRefreshTime + 20 < M5.millis()) {
     deviceState.lastRefreshTime = M5.millis();
-
-    int16_t pressure = getPressure();
-
-    setTimer(pressure);
     
-    sendToBle(pressure);
+    // Get current pressure and reset timer if there's any change
+    int16_t currentPressure = getPressure();
+    
+    if (deviceState.lastPressure == -1 || currentPressure != deviceState.lastPressure) {
+      deviceState.lastActivityTime = millis();
+      deviceState.lastPressure = currentPressure;
+    }
+    
+    setTimer(currentPressure);
+    
+    sendToBle(currentPressure);
 
     drawGraph();
   }
@@ -414,11 +451,12 @@ void loop() {
 
   if (M5.BtnC.wasPressed()) {
     display.drawCenterString("Rebooting", display.width() / 2, display.height() / 2);
-    M5.Speaker.tone(660, 100, -1, true);
-    M5.delay(100);
-    M5.Speaker.tone(880, 100, -1, true);
-    M5.delay(100);
-    M5.Speaker.tone(783, 100, -1, true);
+    // M5.Speaker.tone(660, 100, -1, true);
+    // M5.delay(100);
+    // M5.Speaker.tone(880, 100, -1, true);
+    // M5.delay(100);
+    // M5.Speaker.tone(783, 100, -1, true);
+    // M5.delay(200);
     M5.delay(200);
     ESP.restart();
   }
