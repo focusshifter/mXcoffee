@@ -83,38 +83,52 @@ def copy_esptool(dist_dir):
     success = True
     messages = []
 
-    # Download Windows esptool.exe
-    esptool_url = get_latest_esptool_url()
+    # Cache directory in the project
+    project_dir = os.path.dirname(dist_dir)  # dist_dir is project_dir/dist
+    cache_dir = os.path.join(project_dir, '.cache')
+    os.makedirs(cache_dir, exist_ok=True)
     
-    # Create a temporary directory for ZIP extraction
-    with tempfile.TemporaryDirectory() as temp_dir:
-        zip_path = os.path.join(temp_dir, "esptool.zip")
-        try:
-            # Download the ZIP file
-            print(f"Downloading esptool ZIP from {esptool_url}")
-            download_file(esptool_url, zip_path)
-            
-            # Extract the ZIP
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
-            
-            # Find and copy esptool.exe from the extracted contents, looking in esptool-win64 subdir
-            esptool_path = None
-            for root, _, files in os.walk(temp_dir):
-                if "esptool-win64" in root and "esptool.exe" in files:
-                    esptool_path = os.path.join(root, "esptool.exe")
-                    break
-            
-            if esptool_path:
-                dest_path = os.path.join(dist_dir, "esptool.exe")
-                shutil.copy2(esptool_path, dest_path)
-                print(f"Successfully copied esptool.exe to {dest_path}")
-            else:
+    # Cached esptool path
+    cached_esptool = os.path.join(cache_dir, 'esptool.exe')
+    
+    if os.path.exists(cached_esptool):
+        print(f"Using cached esptool from {cached_esptool}")
+        shutil.copy2(cached_esptool, os.path.join(dist_dir, "esptool.exe"))
+        success = True
+    else:
+        # Download Windows esptool.exe
+        esptool_url = get_latest_esptool_url()
+        
+        # Create a temporary directory for ZIP extraction
+        with tempfile.TemporaryDirectory() as temp_dir:
+            zip_path = os.path.join(temp_dir, "esptool.zip")
+            try:
+                # Download the ZIP file
+                print(f"Downloading esptool ZIP from {esptool_url}")
+                download_file(esptool_url, zip_path)
+                
+                # Extract the ZIP
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(temp_dir)
+                
+                # Find and copy esptool.exe from the extracted contents, looking in esptool-win64 subdir
+                esptool_path = None
+                for root, _, files in os.walk(temp_dir):
+                    if "esptool-win64" in root and "esptool.exe" in files:
+                        esptool_path = os.path.join(root, "esptool.exe")
+                        break
+                
+                if esptool_path:
+                    # Copy to cache and dist
+                    shutil.copy2(esptool_path, cached_esptool)
+                    shutil.copy2(esptool_path, os.path.join(dist_dir, "esptool.exe"))
+                    print(f"Successfully cached and copied esptool.exe")
+                else:
+                    success = False
+                    messages.append("Could not find esptool.exe in esptool-win64 directory of the downloaded ZIP")
+            except Exception as e:
                 success = False
-                messages.append("Could not find esptool.exe in esptool-win64 directory of the downloaded ZIP")
-        except Exception as e:
-            success = False
-            messages.append(f"Error processing esptool ZIP: {e}")
+                messages.append(f"Error processing esptool ZIP: {e}")
 
     # Create Unix wrapper script
     wrapper_path = os.path.join(dist_dir, "esptool")
