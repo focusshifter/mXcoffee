@@ -159,11 +159,11 @@ int16_t getPressure() {
     static int16_t pressure = 0;
     
     // Update pressure less frequently
-    if (M5.millis() - lastTime > 50) {  // Update every 50ms instead of every call
+    if (M5.millis() - lastTime > 30) {  // Update every 30ms instead of every call
         lastTime = M5.millis();
         double normalized_time = 2.0 * M_PI * (M5.millis() / 10000.0);
         double sin_value = sin(normalized_time - M_PI / 2);
-        pressure = int16_t(round(0.5 * (sin_value + 1.0) * 15000));
+        pressure = int16_t(round(0.5 * (sin_value + 1.0) * 12000));
     }
 #else
     int16_t pressure = pressureSensor->getPressure();
@@ -191,11 +191,17 @@ void sendToBle(int16_t pressure) {
 }
 
 void drawGraph() {
+  // Pressure graph
   const int16_t graphStartX = 10;
   const int16_t graphStartY = 60;
   const int16_t graphHeight = display.height() - graphStartY - 10;
-  const int16_t graphWidth = display.width() - graphStartX * 2;
+  const int16_t graphWidth = display.width() - graphStartX - 45; // Add padding on the right for "audio" bar
   
+  const int16_t audioBarWidth = 30;
+  const int16_t audioBarX = display.width() - audioBarWidth - 10;
+  const int16_t audioBarY = 60;
+  const int16_t audioBarHeight = graphHeight;
+
   static M5Canvas graph(&display);  // Make the canvas static so it's not recreated every time
 
   if (!graph.width()) {  // Only create sprite once
@@ -241,7 +247,7 @@ void drawGraph() {
   } else {
     graph.setTextColor(TFT_DARKGRAY, TFT_BLACK);
   }
-  graph.drawString("BT", display.width() - 50, 10);
+  graph.drawRightString("BT", display.width() - 10, 30);
 
   // Draw battery state
   int32_t batteryLevel = M5.Power.getBatteryLevel();
@@ -263,7 +269,7 @@ void drawGraph() {
   graph.setTextColor(TFT_DARKGREY);
 
   // Define darker gray (about half as bright as TFT_DARKGRAY)
-  const uint16_t TFT_VERY_DARK_GRAY = 0x3186;  // RGB(24,24,24)
+  const uint16_t TFT_VERY_DARK_GRAY = graph.color565(20,20,20);
 
   for (int i = 0; i < PRESSURE_GRID_COUNT; i++) {
     int16_t pressureY = graphStartY + (10 - PRESSURE_GRID_VALUES[i]) * graphHeight / 10;
@@ -289,7 +295,45 @@ void drawGraph() {
 
   // Draw pressure in bar
   graph.setTextColor(graphColor);
-  graph.drawRightString(String(float(lastPressure) / 1000), 260, 10);
+  graph.drawRightString(String(float(lastPressure) / 1000, 1), 260, 10);
+
+  // Audio bar
+  int16_t audioBarHeightCurrent = min(static_cast<int16_t>((lastPressure - minPressure) * audioBarHeight / (maxPressure - minPressure)), audioBarHeight);
+  int16_t audioBarYCurrent = graphStartY + graphHeight - audioBarHeightCurrent;
+  graph.fillRect(audioBarX, audioBarY, audioBarWidth, audioBarHeight + 1, TFT_VERY_DARK_GRAY);
+
+  // Audio bar color gradient
+  // Draw gradient bar line by line, starting from the bottom
+  for (int16_t y = 0; y < audioBarHeightCurrent; y++) {
+    // Calculate pressure value for this y position
+    int16_t pressureAtY = map(y, 0, audioBarHeight, minPressure, maxPressure);
+
+    uint16_t lineColor;
+    if (pressureAtY <= 6000) { // 0-6000: Dark gray to light gray
+      uint8_t grayComponent = map(pressureAtY, 0, 6000, 64, 96);
+      lineColor = graph.color565(grayComponent, grayComponent, grayComponent);
+    } else if (pressureAtY <= 7000) { // 6000-7000: Light gray to green
+      uint8_t greyComponent = map(pressureAtY, 6000, 7000, 96, 0);
+      uint8_t greenComponent = map(pressureAtY, 6000, 7000, 96, 255);
+      lineColor = graph.color565(greyComponent, greenComponent, greyComponent);
+    } else if (pressureAtY <= 8000) { // 7000-8000: Solid green
+      lineColor = graph.color565(0, 255, 0);
+    } else if (pressureAtY <= 8500) { // 8000-8500: Green to yellow
+      uint8_t redComponent = map(pressureAtY, 8000, 8500, 0, 255);
+      lineColor = graph.color565(redComponent, 255, 0);
+    } else if (pressureAtY <= 10000) { // 8500-10000: Yellow to red
+      uint8_t greenComponent = map(pressureAtY, 8500, 10000, 255, 0);
+      lineColor = graph.color565(255, greenComponent, 0);
+    } else { // > 10000: Solid red
+      lineColor = graph.color565(255, 0, 0);
+    }
+
+    // Draw the line at the correct position from bottom
+    graph.drawFastHLine(audioBarX, audioBarY + audioBarHeight - y, audioBarWidth, lineColor);
+  }
+
+  // Draw current bar at audio bar
+  // graph.drawFastHLine(audioBarX, audioBarYCurrent, audioBarWidth, TFT_WHITE);
 
   // Draw shot time in seconds
   graph.setTextColor(TFT_WHITE);
