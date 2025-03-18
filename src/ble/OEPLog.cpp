@@ -1,17 +1,17 @@
-//
-// Created by Wilson Wong on 5/16/23.
-//
-
 #include "OEPLog.h"
-
-#include <Arduino.h>
 #include <BLE2902.h>
 
-BLECharacteristic LogCharacteristic(BLE_LOG_CHARACTERISTIC, BLECharacteristic::PROPERTY_NOTIFY);
+#ifdef SIMULATOR
+#include "SimulatorArduino.h"
+#else
+#include <Arduino.h>
+#endif
+
+BLECharacteristic LogCharacteristic(BLE_LOG_CHARACTERISTIC,
+                                    BLECharacteristic::PROPERTY_NOTIFY);
 BLEDescriptor LogDescriptor(BLE_LOG_DESCRIPTOR);
 
-void OEPLog::registerWithServer(BLEServer *pServer)
-{
+void OEPLog::registerWithServer(BLEServer *pServer) {
   auto logService = pServer->createService(BLE_LOG_SERVICE);
   LogDescriptor.setValue("null terminated string");
   logService->addCharacteristic(&LogCharacteristic);
@@ -21,9 +21,12 @@ void OEPLog::registerWithServer(BLEServer *pServer)
   logService->start();
 }
 
-void OEPLog::log(const std::string &str)
-{
+void OEPLog::log(const std::string &str) {
+#ifdef SIMULATOR
+  Serial_println(str.c_str());
+#else
   Serial.println(str.c_str());
+#endif
   LogCharacteristic.setValue(str);
   LogCharacteristic.notify();
 }

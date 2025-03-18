@@ -9,30 +9,24 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 
-BLECharacteristic BatteryLevelCharacteristic(BLE_BATTERY_CHARACTERISTIC,
-                                             BLECharacteristic::PROPERTY_READ |
-                                                 BLECharacteristic::PROPERTY_NOTIFY);
+BLECharacteristic BatteryLevelCharacteristic(
+    BLE_BATTERY_CHARACTERISTIC,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
 BLEDescriptor BatteryLevelDescriptor(BLE_BATTERY_DESCRIPTOR);
 
-BLEBattery::BLEBattery(uint8_t initialLevel)
-{
+BLEBattery::BLEBattery(uint8_t initialLevel) {
   this->_battery_level = initialLevel;
 }
 
-void BLEBattery::batteryLevel(uint8_t newLevel)
-{
+void BLEBattery::batteryLevel(uint8_t newLevel) {
   this->_battery_level = newLevel;
   BatteryLevelCharacteristic.setValue(&_battery_level, 1);
   BatteryLevelCharacteristic.notify();
 }
 
-uint8_t BLEBattery::batterylevel() const
-{
-  return _battery_level;
-}
+uint8_t BLEBattery::batterylevel() const { return _battery_level; }
 
-void BLEBattery::setupBatteryService(BLEServer *pServer)
-{
+void BLEBattery::setupBatteryService(BLEServer *pServer) {
   BLEService *batteryService = pServer->createService(BLE_BATTERY_SERVICE);
   batteryService->addCharacteristic(&BatteryLevelCharacteristic);
   BatteryLevelDescriptor.setValue("1..100%");

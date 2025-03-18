@@ -1,145 +1,190 @@
 #include "pressure_sensor.h"
 
+#ifdef SIMULATOR
+#include "SimulatorArduino.h"
+#else
 #include <Arduino.h>
+#endif
+
+#ifdef SIMULATOR_OR_DEBUG
+PressureSensor::PressureSensor(void * /* unused */) { pressure = 0; }
+#else
+#include <M5GFX.h>
 #include <M5Unified.h>
 
-//
-// Implementation for WNK80MA pressure sensor I2C
-//
-
-PressureSensor::PressureSensor(m5::I2C_Class* i2c_wire)
-{
+PressureSensor::PressureSensor(m5::I2C_Class *i2c_wire) {
   wire = i2c_wire;
   pressure = 0;
 }
+#endif
 
-int16_t PressureSensor::getPressure()
-{
+#ifndef SIMULATOR_OR_DEBUG
+int16_t PressureSensor::getPressure() {
   float fpressureValues[3];
 
-  for (int i = 0; i < 3; i++)
-  {
+  for (int i = 0; i < 3; i++) {
     fpressureValues[i] = getRealPressure();
-    M5.delay(5);
+    delay(5); // Use delay for consistency across targets
   }
 
+#ifdef SIMULATOR
+  Serial_print("fpressureValues: ");
+  Serial_print(fpressureValues[0]);
+  Serial_print(", ");
+  Serial_print(fpressureValues[1]);
+  Serial_print(", ");
+  Serial_println(fpressureValues[2]);
+#else
   Serial.print("fpressureValues: ");
   Serial.print(fpressureValues[0]);
   Serial.print(", ");
   Serial.print(fpressureValues[1]);
   Serial.print(", ");
   Serial.println(fpressureValues[2]);
+#endif
 
-  float fpressure = (fpressureValues[0] + fpressureValues[1] + fpressureValues[2]) / 3;
+  float fpressure =
+      (fpressureValues[0] + fpressureValues[1] + fpressureValues[2]) / 3;
 
+#ifdef SIMULATOR
+  Serial_print("fpressure avg: ");
+  Serial_println(fpressure);
+#else
   Serial.print("fpressure avg: ");
   Serial.println(fpressure);
+#endif
 
-  // fpressure = 1.238 * fpressure - 1.044;
+  pressure = int16_t(fpressure * 1000); // Convert to mbar
 
-  // pressure = int16_t(fpressure * 10) - 1000; // Convert to mbar and compensate for atmospheric
-  // pressure
-  pressure = int16_t(fpressure * 1000);  // Convert to mbar
-
+#ifdef SIMULATOR
+  Serial_print("pressureconv: ");
+  Serial_println(pressure);
+#else
   Serial.print("pressureconv: ");
   Serial.println(pressure);
+#endif
 
-  if (pressure < 0)
-  {
+  if (pressure < 0) {
     pressure = 0;
   }
 
   return pressure;
 }
 
-String PressureSensor::getHexData()
-{
-  return hex_data;
-}
+std::string PressureSensor::getHexData() { return hex_data; }
 
-float PressureSensor::getRealPressure()
-{
+float PressureSensor::getRealPressure() {
   float fadc = 0;
   float fpressure = 0;
   uint8_t data[3];
   uint32_t dat = 0;
-  // Read 3 bytes from register 0x06 of the device with address 0x6D
-  if (wire->readRegister(0x6D, 0x06, data, 3, 100000))
-  {
+  if (wire->readRegister(0x6D, 0x06, data, 3, 100000)) {
+#ifdef SIMULATOR
+    Serial_println("Data read successfully:");
+    Serial_print(" Byte 1: ");
+    Serial_print(data[0], BIN);
+    Serial_print(" Byte 2: ");
+    Serial_print(data[1], BIN);
+    Serial_print(" Byte 3: ");
+    Serial_println(data[2], BIN);
+#else
     Serial.println("Data read successfully:");
     Serial.print(" Byte 1: ");
     Serial.print(data[0], BIN);
     Serial.print(" Byte 2: ");
     Serial.print(data[1], BIN);
     Serial.print(" Byte 3: ");
-    Serial.print(data[2], BIN);
+    Serial.println(data[2], BIN);
+#endif
 
-    Serial.println("");
-
+#ifdef SIMULATOR
+    Serial_print(" Byte 1: ");
+    Serial_print(data[0], HEX);
+    Serial_print(" Byte 2: ");
+    Serial_print(data[1], HEX);
+    Serial_print(" Byte 3: ");
+    Serial_println(data[2], HEX);
+#else
     Serial.print(" Byte 1: ");
-    Serial.print(data[0], HEX);  // Print the first byte
+    Serial.print(data[0], HEX);
     Serial.print(" Byte 2: ");
-    Serial.print(data[1], HEX);  // Print the second byte
+    Serial.print(data[1], HEX);
     Serial.print(" Byte 3: ");
-    Serial.print(data[2], HEX);  // Print the third byte
+    Serial.println(data[2], HEX);
+#endif
 
-    Serial.println("");
-
-    hex_data = String(data[0], HEX) + " " + String(data[1], HEX) + " " + String(data[2], HEX);
-  }
-  else
-  {
+    hex_data = std::to_string(data[0]) + " " + std::to_string(data[1]) + " " +
+               std::to_string(data[2]);
+  } else {
+#ifdef SIMULATOR
+    Serial_println("Failed to read data");
+    hex_data = "ER ER ER";
+#else
     Serial.println("Failed to read data");
-    hex_data = String("ER ER ER");
+    hex_data = "ER ER ER";
+#endif
   }
 
   dat = (data[0] << 16) | (data[1] << 8) | data[2];
 
+#ifdef SIMULATOR
+  Serial_print("dat: ");
+  Serial_println(dat, BIN);
+  Serial_print("dat: ");
+  Serial_println(dat);
+#else
   Serial.print("dat: ");
   Serial.println(dat, BIN);
   Serial.print("dat: ");
   Serial.println(dat);
+#endif
 
-  if (dat & 0x800000)
-  {
+  if (dat & 0x800000) {
     fadc = dat - 16777216.0;
-  }
-  else
-  {
+  } else {
     fadc = dat;
   }
 
+#ifdef SIMULATOR
+  Serial_print("fadc: ");
+  Serial_println(fadc);
+#else
   Serial.print("fadc: ");
   Serial.println(fadc);
+#endif
 
-  // float vref = 4.0; // 5V
-  // float adc = vref * fadc / 8388608.0; // 2^23
-  // float lower_range_limit = 0;
-  // float upper_range_limit = 2000; // 20 bar or 2000 kPa
-
-  // float range = upper_range_limit - lower_range_limit;
-
-  // float p_voltage_low = 0.5;
-  // float p_voltage_high = 4.5;
-  // float p_voltage_scale = p_voltage_high - p_voltage_low;
-
-  // float kpa_in_v = p_voltage_scale / range;
-  // fpressure = (adc - p_voltage_low) / kpa_in_v + lower_range_limit;
-
-  // Linear regression coefficients
   float a = 3.9628e-6;
   float b = -4.9509;
-
-  // Calculate the manometer value in bar
   fpressure = a * fadc + b;
 
+#ifdef SIMULATOR
+  Serial_print("fpressure: ");
+  Serial_println(fpressure);
+#else
   Serial.print("fpressure: ");
   Serial.println(fpressure);
+#endif
 
   return fpressure;
 }
 
-int16_t PressureSensor::getMaxPressure()
-{
-  return 20000;
+int16_t PressureSensor::getMaxPressure() { return 20000; }
+#endif
+
+#ifdef SIMULATOR_OR_DEBUG
+int16_t PressureSensor::getPressure() {
+  static uint32_t lastTime = 0;
+  static int16_t pressure = 0;
+  if (millis() - lastTime > 30) {
+    lastTime = millis();
+    double normalized_time = 2.0 * M_PI * (millis() / 10000.0);
+    double sin_value = sin(normalized_time - M_PI / 2);
+    pressure = int16_t(round(0.5 * (sin_value + 1.0) * 12000));
+  }
+  return pressure;
 }
+
+std::string PressureSensor::getHexData() { return "SIM DATA"; }
+
+int16_t PressureSensor::getMaxPressure() { return 20000; }
+#endif
