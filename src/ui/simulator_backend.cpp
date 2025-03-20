@@ -15,7 +15,7 @@ SimulatorCanvas::SimulatorCanvas() {
     h = 240;
     textFg = 0xFFFF; // White
     textBg = 0x0000; // Black
-    currentFont = &DejaVu12; // Default font
+    currentFont = nullptr;
 }
 
 SimulatorCanvas::~SimulatorCanvas() {
@@ -59,46 +59,35 @@ void SimulatorCanvas::fillSprite(uint16_t color) {
 
 void SimulatorCanvas::drawString(const char *str, int16_t x, int16_t y) {
     if (!currentFont || !str) return;
-    Serial_printf("Rendering string '%s' at (%d, %d) with font %p\n", str, x, y, currentFont);
-
-    const GFXglyph *glyph;
     int16_t cursorX = x;
-    for (int i = 0; str[i]; i++) {
-        uint8_t c = str[i];
-        if (c < currentFont->first || c > currentFont->last) continue;
-        glyph = &currentFont->glyph[c - currentFont->first];
+    Serial_printf("Rendering string '%s' at (%d, %d) with font %p, first: %d, last: %d, yAdvance: %d\n",
+                  str, x, y, currentFont, currentFont->first, currentFont->last, currentFont->yAdvance);
+
+    while (*str) {
+        uint8_t c = (uint8_t)*str++;
+        if (c < currentFont->first || c > currentFont->last) {
+            Serial_printf("Skipping char '%c' (out of range: %d < %d or %d > %d)\n",
+                          c, c, currentFont->first, c, currentFont->last);
+            continue;
+        }
+
+        GFXglyph *glyph = &currentFont->glyph[c - currentFont->first];
         uint8_t *bitmap = currentFont->bitmap + glyph->bitmapOffset;
 
         Serial_printf("Char '%c' at index %d, bitmapOffset: %d, width: %d, height: %d, xAdvance: %d, xOffset: %d, yOffset: %d\n",
                       c, c - currentFont->first, glyph->bitmapOffset, glyph->width, glyph->height, glyph->xAdvance, glyph->xOffset, glyph->yOffset);
 
-        int bytesPerRow = (glyph->width + 7) / 8;
-        Serial_printf("Bitmap data for '%c': ", c);
-        for (int j = 0; j < glyph->height * bytesPerRow; j++) {
-            Serial_printf("%02X ", bitmap[j]);
-        }
-        Serial_println("");
+        int16_t bitmapX = cursorX + glyph->xOffset;
+        int16_t bitmapY = y + glyph->yOffset;
 
-        Serial_println("Bitmap visual:");
-        for (int row = 0; row < glyph->height; row++) {
-            for (int col = 0; col < glyph->width; col++) {
-                int byteIndex = row * bytesPerRow + col / 8;
-                int bitIndex = 7 - (col % 8);
-                bool pixel = (bitmap[byteIndex] >> bitIndex) & 1;
-                Serial_print(pixel ? "█" : " ");
-            }
-            Serial_println("");
-        }
-
-        for (int row = 0; row < glyph->height; row++) {
-            for (int col = 0; col < glyph->width; col++) {
-                int byteIndex = row * bytesPerRow + col / 8;
-                int bitIndex = 7 - (col % 8);
-                bool pixel = (bitmap[byteIndex] >> bitIndex) & 1;
-                if (pixel) {
-                    setPixel(cursorX + col + glyph->xOffset, y + row + glyph->yOffset, textFg);
+        for (int16_t gy = 0; gy < glyph->height; gy++) {
+            for (int16_t gx = 0; gx < glyph->width; gx++) {
+                uint8_t byte = bitmap[(gy * ((glyph->width + 7) / 8)) + (gx / 8)];
+                uint8_t bit = (byte >> (7 - (gx % 8))) & 1;
+                if (bit) {
+                    setPixel(bitmapX + gx, bitmapY + gy, textFg);
                 } else {
-                    setPixel(cursorX + col + glyph->xOffset, y + row + glyph->yOffset, textBg);
+                    setPixel(bitmapX + gx, bitmapY + gy, textBg);  // Explicit background
                 }
             }
         }
@@ -108,31 +97,41 @@ void SimulatorCanvas::drawString(const char *str, int16_t x, int16_t y) {
 
 void SimulatorCanvas::drawRightString(const char *str, int16_t x, int16_t y) {
     if (!currentFont || !str) return;
-    int16_t width = 0;
-    for (int i = 0; str[i]; i++) {
-        uint8_t c = str[i];
-        if (c < currentFont->first || c > currentFont->last) continue;
-        const GFXglyph *glyph = &currentFont->glyph[c - currentFont->first];
-        width += glyph->xAdvance;
+    int16_t len = 0;
+    const char *p = str;
+    while (*p) {
+        uint8_t c = (uint8_t)*p++;
+        if (c >= currentFont->first && c <= currentFont->last) {
+            len += currentFont->glyph[c - currentFont->first].xAdvance;
+        }
     }
-    drawString(str, x - width, y);
+    drawString(str, x - len, y);
 }
 
 void SimulatorCanvas::drawCenterString(const char *str, int16_t x, int16_t y) {
     if (!currentFont || !str) return;
-    int16_t width = 0;
-    for (int i = 0; str[i]; i++) {
-        uint8_t c = str[i];
-        if (c < currentFont->first || c > currentFont->last) continue;
-        const GFXglyph *glyph = &currentFont->glyph[c - currentFont->first];
-        width += glyph->xAdvance;
+    int16_t len = 0;
+    const char *p = str;
+    while (*p) {
+        uint8_t c = (uint8_t)*p++;
+        if (c >= currentFont->first && c <= currentFont->last) {
+            len += currentFont->glyph[c - currentFont->first].xAdvance;
+        }
     }
-    drawString(str, x - width / 2, y);
+    drawString(str, x - len / 2, y);
 }
 
 void SimulatorCanvas::setFont(const void* font) {
     currentFont = static_cast<const GFXfont*>(font);
     Serial_printf("Set font to %p\n", currentFont);
+    if (currentFont) {
+        Serial_printf("Font details: bitmap=%p, glyph=%p, first=%d, last=%d, yAdvance=%d\n",
+                      currentFont->bitmap, currentFont->glyph, currentFont->first, currentFont->last, currentFont->yAdvance);
+        uint8_t *raw = (uint8_t *)currentFont;
+        Serial_print("SetFont Raw memory: ");
+        for (int i = 0; i < 24; i++) Serial_printf("%02X ", raw[i]);
+        Serial_println("");
+    }
 }
 
 void SimulatorCanvas::setTextColor(uint16_t fg, uint16_t bg) {
@@ -190,10 +189,7 @@ void SimulatorCanvas::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t co
 }
 
 const char* SimulatorCanvas::getCurrentFontName() {
-    if (currentFont == &DejaVu12) return "DejaVu12 (GFXfont)";
-    if (currentFont == &DejaVu24) return "DejaVu24 (GFXfont)";
-    if (currentFont == &DejaVu56) return "DejaVu56 (GFXfont)";
-    return "Unknown font";
+    return "Dosis_Medium12pt7b (GFXfont)"; // Static string for simulator
 }
 
 #endif  // SIMULATOR

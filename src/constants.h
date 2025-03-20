@@ -27,11 +27,15 @@ typedef struct {
 #include "fonts/DejaVu12.h"
 #include "fonts/DejaVu24.h"
 #include "fonts/DejaVu56.h"
-
 #else
 // For M5Unified, use M5GFX fonts but ensure compatibility
 #include <M5GFX.h>
 #endif
+
+#include "fonts/Dosis_Medium9pt7b.h"
+#include "fonts/Dosis_Medium12pt7b.h"
+#include "fonts/Dosis_Medium16pt7b.h"
+#include "fonts/Dosis_Medium24pt7b.h"
 
 #ifdef SIMULATOR
 #define TFT_WHITE 0xFFFF
@@ -79,3 +83,8 @@ struct UIData {
   int16_t maxPressure;
   bool deviceConnected; // Added to match ui.cpp usage
 };
+
+const GFXfont FontBase9 = Dosis_Medium9pt7b;
+const GFXfont FontBase12 = Dosis_Medium12pt7b;
+const GFXfont FontBase16 = Dosis_Medium16pt7b;
+const GFXfont FontBase24 = Dosis_Medium24pt7b;

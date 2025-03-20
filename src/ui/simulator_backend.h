@@ -32,10 +32,11 @@ public:
     void drawString(const char* str, int16_t x, int16_t y) override;
     void drawRightString(const char* str, int16_t x, int16_t y) override;
     void drawCenterString(const char* str, int16_t x, int16_t y) override;
-    void setFont(const void* font) override;  // Changed to void* to match CanvasWrapper
+    void setFont(const void* font) override;
     void setTextColor(uint16_t fg, uint16_t bg) override;
     uint16_t color565(uint8_t r, uint8_t g, uint8_t b) override;
     void pushSprite(int16_t x, int16_t y) override;
+    const char* getCurrentFontName() override; // Ensure this matches CanvasWrapper
 
 private:
     void setPixel(int32_t x, int32_t y, uint16_t color);  // Helper method
