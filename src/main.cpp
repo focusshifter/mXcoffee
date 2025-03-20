@@ -1,4 +1,4 @@
-#include "ui/m5unified_backend.h" // Path is correct based on directory structure
+#include "ui/m5unified_backend.h"
 #include <Arduino.h>
 #include <BLE2902.h>
 #include <BLEDevice.h>
@@ -71,9 +71,15 @@ void setup() {
   M5.Speaker.setVolume(120);
   display = M5.Lcd;
   Serial.begin(115200);
+  Serial.println("Setup: M5 initialized");
 
   display.fillScreen(TFT_BLACK);
   displayWrapper = new DisplayWrapper(display);
+
+  Serial.print("Setup: Display width=");
+  Serial.print(display.width());
+  Serial.print(", height=");
+  Serial.println(display.height());
 
   String build = String("m5stack version ") + VERSION + " " + __DATE__ + " " +
                  __TIME__ + " :)";
@@ -81,18 +87,30 @@ void setup() {
   displayWrapper->drawCenterString("Ready to brew!",
                                    displayWrapper->width() / 2,
                                    displayWrapper->height() / 2);
+  Serial.println("Setup: Display initialized");
 
   M5.Power.setExtOutput(true);
   Wire.begin(33, 32);
   M5.Ex_I2C.begin(I2C_NUM_0, 33, 32);
+  Serial.println("Setup: I2C initialized");
+
   pressureSensor = new PressureSensor(&M5.Ex_I2C);
+  Serial.println("Setup: Pressure sensor initialized");
 
   delay(150); // Use delay for consistency
   pressureSensor->getPressure();
   delay(150);
+  Serial.println("Setup: First pressure reading done");
 
   for (int i = 0; i < PRESSURE_VALUES_LEN; i++)
     pressureValues[i] = 0;
+  Serial.println("Setup: Pressure values array initialized");
+
+  // Clear the display before entering loop()
+  display.fillScreen(TFT_BLACK);
+  Serial.println("Setup: Display cleared before loop");
+
+  Serial.println("Setup: Complete");
 }
 
 void initBle() {
@@ -178,18 +196,22 @@ void setTimer(int16_t pressure) {
 }
 
 void loop() {
+  Serial.println("Loop: Start");
   M5.update();
   if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnC.wasPressed()) {
     deviceState.lastActivityTime = millis();
+    Serial.println("Loop: Button pressed");
   }
   if (!deviceState.isAsleep &&
       (millis() - deviceState.lastActivityTime >= AUTO_OFF_TIMEOUT)) {
     M5.Power.powerOff();
+    Serial.println("Loop: Powering off due to inactivity");
     return;
   }
   delay(2); // Use delay for consistency
 
   if (deviceState.lastRefreshTime + 20 < millis()) {
+    Serial.println("Loop: Refreshing display");
     deviceState.lastRefreshTime = millis();
     int16_t currentPressure = getPressure();
     if (deviceState.lastPressure == -1 ||
@@ -208,19 +230,19 @@ void loop() {
                    .batteryLevel = M5.Power.getBatteryLevel(),
                    .debugMode = deviceState.debugMode,
                    .shotTotalTime = deviceState.shotTotalTime,
-                   .displayWidth = static_cast<int16_t>(
-                       M5.Display.width()), // Cast to avoid warning
-                   .displayHeight = static_cast<int16_t>(
-                       M5.Display.height()), // Cast to avoid warning
+                   .displayWidth = static_cast<int16_t>(M5.Display.width()),
+                   .displayHeight = static_cast<int16_t>(M5.Display.height()),
                    .maxPressure = pressureSensor->getMaxPressure(),
                    .deviceConnected = deviceState.deviceConnected};
     std::copy(pressureValues, pressureValues + PRESSURE_VALUES_LEN,
               data.pressureValues);
     ui.draw(data);
+    Serial.println("Loop: Display updated");
   }
 
   if (M5.BtnA.wasPressed()) {
     deviceState.debugMode = !deviceState.debugMode;
+    Serial.println("Loop: Debug mode toggled");
   }
   if (M5.BtnB.wasPressed()) {
     deviceState.isBluetoothOn = !deviceState.isBluetoothOn;
@@ -239,11 +261,6 @@ void loop() {
                                        displayWrapper->height() / 2);
       playBtOffSound();
     }
-  }
-  if (M5.BtnC.wasPressed()) {
-    displayWrapper->drawCenterString("Rebooting", displayWrapper->width() / 2,
-                                     displayWrapper->height() / 2);
-    delay(200);
-    ESP.restart();
+    Serial.println("Loop: Bluetooth toggled");
   }
 }

@@ -12,13 +12,37 @@
 void printFontDebug(const GFXfont* font) {
     printf("Font Debug: bitmap=%p, glyph=%p, first=%d, last=%d, yAdvance=%d\n",
            font->bitmap, font->glyph, font->first, font->last, font->yAdvance);
-    // Raw memory dump
+    // Raw memory dump of the font structure
     const uint8_t* raw = (const uint8_t*)font;
-    printf("Raw memory: ");
+    printf("Raw memory of font struct: ");
     for (int i = 0; i < 24; i++) {
         printf("%02X ", raw[i]);
     }
     printf("\n");
+    // Dump the first 10 bytes of the bitmap
+    printf("First 10 bytes of bitmap: ");
+    for (int i = 0; i < 10; i++) {
+        printf("%02X ", font->bitmap[i]);
+    }
+    printf("\n");
+    // Dump the 9 bytes for 'P' at bitmapOffset 289
+    printf("Bitmap data for 'P' (offset 289): ");
+    for (int i = 289; i < 289 + 9; i++) {
+        printf("%02X ", font->bitmap[i]);
+    }
+    printf("\n");
+    // Dump the glyph entry for 'P' (index 48)
+    const GFXglyph* glyph = &font->glyph[48];
+    printf("Glyph for 'P': bitmapOffset=%d, width=%d, height=%d, xAdvance=%d, xOffset=%d, yOffset=%d\n",
+           glyph->bitmapOffset, glyph->width, glyph->height, glyph->xAdvance, glyph->xOffset, glyph->yOffset);
+}
+
+// Force inclusion of font data
+void forceFontInclusion() {
+    volatile const uint8_t* bitmap = DejaVu12Bitmaps;
+    volatile const GFXglyph* glyph = DejaVu12Glyphs;
+    (void)bitmap;  // Prevent optimization
+    (void)glyph;
 }
 #endif
 
@@ -47,9 +71,10 @@ void setup() {
     TTF_Init();
     pressureSensor = new PressureSensor(nullptr);
     for (int i = 0; i < PRESSURE_VALUES_LEN; i++) pressureValues[i] = 0;
-    printFontDebug(&DejaVu12);  // Should show DejaVu12
-    printFontDebug(&DejaVu24);  // Should show DejaVu24
-    printFontDebug(&DejaVu56);  // Should show DejaVu56
+    printFontDebug(&DejaVu12);
+    printFontDebug(&DejaVu24);
+    printFontDebug(&DejaVu56);
+    forceFontInclusion();  // Ensure font data is linked
 }
 
 int16_t getPressure() {
