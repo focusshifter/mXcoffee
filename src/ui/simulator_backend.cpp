@@ -1,183 +1,191 @@
 #ifdef SIMULATOR
 
 #include "simulator_backend.h"
-#include "../constants.h"
+#include "SimulatorArduino.h"
 
-SimulatorCanvas::SimulatorCanvas()
-    : w(0), h(0), buffer(nullptr), textFg(0xFFFF), textBg(0) {
-  SDL_Init(SDL_INIT_VIDEO);
-  TTF_Init();
-  window = SDL_CreateWindow("M5Stack Simulator", SDL_WINDOWPOS_CENTERED,
-                            SDL_WINDOWPOS_CENTERED, 320, 240, 0);
-  renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
-  texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB565,
-                              SDL_TEXTUREACCESS_STREAMING, 320, 240);
-  font = TTF_OpenFont("DejaVuSans.ttf", 12);
-  if (!font)
-    font = TTF_OpenFont("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12);
-  if (!font)
-    SDL_Log("Failed to load font: %s", TTF_GetError());
+SimulatorCanvas::SimulatorCanvas() {
+    SDL_Init(SDL_INIT_VIDEO);
+    TTF_Init();
+    window = SDL_CreateWindow("Simulator", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 320, 240, 0);
+    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, 320, 240);
+    buffer = new uint32_t[320 * 240];
+    memset(buffer, 0, 320 * 240 * sizeof(uint32_t));
+    w = 320;
+    h = 240;
+    textFg = 0xFFFF; // White
+    textBg = 0x0000; // Black
+    currentFont = nullptr;
 }
 
 SimulatorCanvas::~SimulatorCanvas() {
-  if (buffer)
     delete[] buffer;
-  if (font)
-    TTF_CloseFont(font);
-  TTF_Quit();
-  SDL_DestroyTexture(texture);
-  SDL_DestroyRenderer(renderer);
-  SDL_DestroyWindow(window);
-  SDL_Quit();
+    SDL_DestroyTexture(texture);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    TTF_Quit();
+    SDL_Quit();
 }
 
-void SimulatorCanvas::createSprite(int16_t w, int16_t h) {
-  this->w = w;
-  this->h = h;
-  if (buffer)
+void SimulatorCanvas::setPixel(int32_t x, int32_t y, uint16_t color) {
+    if (x < 0 || x >= w || y < 0 || y >= h) return;
+    uint8_t r = ((color >> 11) & 0x1F) << 3;  // 5-bit R to 8-bit
+    uint8_t g = ((color >> 5) & 0x3F) << 2;   // 6-bit G to 8-bit
+    uint8_t b = (color & 0x1F) << 3;          // 5-bit B to 8-bit
+    buffer[y * w + x] = (0xFF << 24) | (r << 16) | (g << 8) | b;  // ARGB8888, fully opaque
+}
+
+void SimulatorCanvas::createSprite(int16_t width, int16_t height) {
+    w = width;
+    h = height;
     delete[] buffer;
-  buffer = new uint16_t[w * h];
+    buffer = new uint32_t[w * h];
+    memset(buffer, 0, w * h * sizeof(uint32_t));
+    SDL_DestroyTexture(texture);
+    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
 }
 
 int16_t SimulatorCanvas::width() { return w; }
+
 int16_t SimulatorCanvas::height() { return h; }
 
 void SimulatorCanvas::fillSprite(uint16_t color) {
-  for (int i = 0; i < w * h; i++)
-    buffer[i] = color;
-}
-
-void SimulatorCanvas::drawLine(int16_t x1, int16_t y1, int16_t x2, int16_t y2,
-                               uint16_t color) {
-  int dx = abs(x2 - x1), dy = abs(y2 - y1);
-  int sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
-  int err = dx - dy;
-  while (true) {
-    if (x1 >= 0 && x1 < w && y1 >= 0 && y1 < h)
-      buffer[y1 * w + x1] = color;
-    if (x1 == x2 && y1 == y2)
-      break;
-    int e2 = 2 * err;
-    if (e2 > -dy) {
-      err -= dy;
-      x1 += sx;
-    }
-    if (e2 < dx) {
-      err += dx;
-      y1 += sy;
-    }
-  }
-}
-
-void SimulatorCanvas::drawRect(int16_t x, int16_t y, int16_t w, int16_t h,
-                               uint16_t color) {
-  drawLine(x, y, x + w - 1, y, color);
-  drawLine(x, y + h - 1, x + w - 1, y + h - 1, color);
-  drawLine(x, y, x, y + h - 1, color);
-  drawLine(x + w - 1, y, x + w - 1, y + h - 1, color);
-}
-
-void SimulatorCanvas::fillRect(int16_t x, int16_t y, int16_t w, int16_t h,
-                               uint16_t color) {
-  for (int j = y; j < y + h && j < this->h; j++)
-    for (int i = x; i < x + w && i < this->w; i++)
-      if (i >= 0 && j >= 0)
-        buffer[j * this->w + i] = color;
-}
-
-void SimulatorCanvas::drawFastHLine(int16_t x, int16_t y, int16_t w,
-                                    uint16_t color) {
-  for (int i = x; i < x + w && i < this->w; i++)
-    if (i >= 0 && y >= 0 && y < this->h)
-      buffer[y * this->w + i] = color;
+    uint8_t r = ((color >> 11) & 0x1F) << 3;
+    uint8_t g = ((color >> 5) & 0x3F) << 2;
+    uint8_t b = (color & 0x1F) << 3;
+    uint32_t argb = (0xFF << 24) | (r << 16) | (g << 8) | b;
+    for (int i = 0; i < w * h; i++) buffer[i] = argb;
 }
 
 void SimulatorCanvas::drawString(const char *str, int16_t x, int16_t y) {
-  if (!font) {
-    fillRect(x, y, strlen(str) * 8, 12, textFg);
-    return;
-  }
-  SDL_Surface *surface =
-      TTF_RenderText_Solid(font, str,
-                           {static_cast<Uint8>((textFg >> 11) * 8),
-                            static_cast<Uint8>(((textFg >> 5) & 63) * 4),
-                            static_cast<Uint8>((textFg & 31) * 8), 255});
-  SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surface);
-  int tw, th;
-  SDL_QueryTexture(tex, NULL, NULL, &tw, &th);
-  for (int j = 0; j < th && y + j < h; j++)
-    for (int i = 0; i < tw && x + i < w; i++) {
-      uint32_t pixel;
-      memcpy(&pixel, (uint8_t *)surface->pixels + j * surface->pitch + i * 4,
-             4);
-      if (pixel & 0xFF000000)
-        buffer[(y + j) * w + (x + i)] = textFg;
+    if (!currentFont || !str) return;
+    int16_t cursorX = x;
+    Serial_printf("Rendering string '%s' at (%d, %d) with font %p, first: %d, last: %d, yAdvance: %d\n",
+                  str, x, y, currentFont, currentFont->first, currentFont->last, currentFont->yAdvance);
+
+    while (*str) {
+        uint8_t c = (uint8_t)*str++;
+        if (c < currentFont->first || c > currentFont->last) {
+            Serial_printf("Skipping char '%c' (out of range: %d < %d or %d > %d)\n",
+                          c, c, currentFont->first, c, currentFont->last);
+            continue;
+        }
+
+        GFXglyph *glyph = &currentFont->glyph[c - currentFont->first];
+        uint8_t *bitmap = currentFont->bitmap + glyph->bitmapOffset;
+
+        Serial_printf("Char '%c' at index %d, bitmapOffset: %d, width: %d, height: %d, xAdvance: %d, xOffset: %d, yOffset: %d\n",
+                      c, c - currentFont->first, glyph->bitmapOffset, glyph->width, glyph->height, glyph->xAdvance, glyph->xOffset, glyph->yOffset);
+
+        int16_t bitmapX = cursorX + glyph->xOffset;
+        int16_t bitmapY = y + glyph->yOffset;
+
+        for (int16_t gy = 0; gy < glyph->height; gy++) {
+            for (int16_t gx = 0; gx < glyph->width; gx++) {
+                uint8_t byte = bitmap[(gy * ((glyph->width + 7) / 8)) + (gx / 8)];
+                uint8_t bit = (byte >> (7 - (gx % 8))) & 1;
+                if (bit) {
+                    setPixel(bitmapX + gx, bitmapY + gy, textFg);
+                } else {
+                    setPixel(bitmapX + gx, bitmapY + gy, textBg);  // Explicit background
+                }
+            }
+        }
+        cursorX += glyph->xAdvance;
     }
-  SDL_FreeSurface(surface);
-  SDL_DestroyTexture(tex);
 }
 
 void SimulatorCanvas::drawRightString(const char *str, int16_t x, int16_t y) {
-  if (!font) {
-    int len = strlen(str) * 8;
+    if (!currentFont || !str) return;
+    int16_t len = 0;
+    const char *p = str;
+    while (*p) {
+        uint8_t c = (uint8_t)*p++;
+        if (c >= currentFont->first && c <= currentFont->last) {
+            len += currentFont->glyph[c - currentFont->first].xAdvance;
+        }
+    }
     drawString(str, x - len, y);
-    return;
-  }
-  SDL_Surface *surface =
-      TTF_RenderText_Solid(font, str,
-                           {static_cast<Uint8>((textFg >> 11) * 8),
-                            static_cast<Uint8>(((textFg >> 5) & 63) * 4),
-                            static_cast<Uint8>((textFg & 31) * 8), 255});
-  int tw, th;
-  SDL_QueryTexture(SDL_CreateTextureFromSurface(renderer, surface), NULL, NULL,
-                   &tw, &th);
-  drawString(str, x - tw, y);
-  SDL_FreeSurface(surface);
 }
 
 void SimulatorCanvas::drawCenterString(const char *str, int16_t x, int16_t y) {
-  if (!font) {
-    int len = strlen(str) * 8;
+    if (!currentFont || !str) return;
+    int16_t len = 0;
+    const char *p = str;
+    while (*p) {
+        uint8_t c = (uint8_t)*p++;
+        if (c >= currentFont->first && c <= currentFont->last) {
+            len += currentFont->glyph[c - currentFont->first].xAdvance;
+        }
+    }
     drawString(str, x - len / 2, y);
-    return;
-  }
-  SDL_Surface *surface =
-      TTF_RenderText_Solid(font, str,
-                           {static_cast<Uint8>((textFg >> 11) * 8),
-                            static_cast<Uint8>(((textFg >> 5) & 63) * 4),
-                            static_cast<Uint8>((textFg & 31) * 8), 255});
-  int tw, th;
-  SDL_QueryTexture(SDL_CreateTextureFromSurface(renderer, surface), NULL, NULL,
-                   &tw, &th);
-  drawString(str, x - tw / 2, y);
-  SDL_FreeSurface(surface);
 }
 
-void SimulatorCanvas::setFont(const void *font) {
-  if (!this->font)
-    return;
-  if (font == &lgfx::fonts::Font2)
-    TTF_SetFontSize(this->font, 12);
-  else if (font == &lgfx::fonts::Font4)
-    TTF_SetFontSize(this->font, 24);
-  else if (font == &lgfx::fonts::Font8)
-    TTF_SetFontSize(this->font, 48);
+void SimulatorCanvas::setFont(const void* font) {
+    currentFont = static_cast<const GFXfont*>(font);
+    Serial_printf("Set font to %p\n", currentFont);
+    if (currentFont) {
+        Serial_printf("Font details: bitmap=%p, glyph=%p, first=%d, last=%d, yAdvance=%d\n",
+                      currentFont->bitmap, currentFont->glyph, currentFont->first, currentFont->last, currentFont->yAdvance);
+        uint8_t *raw = (uint8_t *)currentFont;
+        Serial_print("SetFont Raw memory: ");
+        for (int i = 0; i < 24; i++) Serial_printf("%02X ", raw[i]);
+        Serial_println("");
+    }
 }
 
 void SimulatorCanvas::setTextColor(uint16_t fg, uint16_t bg) {
-  textFg = fg;
-  textBg = bg;
+    textFg = fg;
+    textBg = bg;
+    Serial_printf("Set text color: fg=0x%04X, bg=0x%04X\n", fg, bg);
 }
 
 uint16_t SimulatorCanvas::color565(uint8_t r, uint8_t g, uint8_t b) {
-  return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
+    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 }
 
 void SimulatorCanvas::pushSprite(int16_t x, int16_t y) {
-  SDL_UpdateTexture(texture, NULL, buffer, w * 2);
-  SDL_RenderClear(renderer);
-  SDL_RenderCopy(renderer, texture, NULL, NULL);
-  SDL_RenderPresent(renderer);
+    SDL_UpdateTexture(texture, NULL, buffer, w * sizeof(uint32_t));
+    SDL_RenderClear(renderer);
+    SDL_Rect dst = {x, y, w, h};
+    SDL_RenderCopy(renderer, texture, NULL, &dst);
+    SDL_RenderPresent(renderer);
+    Serial_printf("Updated texture with buffer %p, size %dx%d at (%d, %d)\n", buffer, w, h, x, y);
 }
 
-#endif // SIMULATOR
+void SimulatorCanvas::drawLine(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color) {
+    int16_t dx = abs(x2 - x1), sx = x1 < x2 ? 1 : -1;
+    int16_t dy = -abs(y2 - y1), sy = y1 < y2 ? 1 : -1;
+    int16_t err = dx + dy, e2;
+
+    while (true) {
+        setPixel(x1, y1, color);
+        if (x1 == x2 && y1 == y2) break;
+        e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x1 += sx; }
+        if (e2 <= dx) { err += dx; y1 += sy; }
+    }
+}
+
+void SimulatorCanvas::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+    drawLine(x, y, x + w - 1, y, color);
+    drawLine(x, y + h - 1, x + w - 1, y + h - 1, color);
+    drawLine(x, y, x, y + h - 1, color);
+    drawLine(x + w - 1, y, x + w - 1, y + h - 1, color);
+}
+
+void SimulatorCanvas::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+    for (int16_t i = x; i < x + w; i++) {
+        for (int16_t j = y; j < y + h; j++) {
+            setPixel(i, j, color);
+        }
+    }
+}
+
+void SimulatorCanvas::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
+    for (int16_t i = x; i < x + w; i++) {
+        setPixel(i, y, color);
+    }
+}
+
+#endif  // SIMULATOR

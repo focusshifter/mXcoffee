@@ -35,7 +35,7 @@ void UI::draw(const UIData &data) {
   Serial.println("Draw: Filled sprite");
 #endif
 
-  canvas->setFont(&lgfx::fonts::Font2);
+  canvas->setFont(&DejaVu12);
 #ifdef SIMULATOR
   Serial_println("Draw: Set initial font");
 #else
@@ -123,7 +123,7 @@ void UI::draw(const UIData &data) {
 #endif
 
   // Pressure value
-  canvas->setFont(&lgfx::fonts::Font4);
+  canvas->setFont(&DejaVu24);
   canvas->setTextColor(graphColor, TFT_BLACK);
   std::string pressureStr =
       std::to_string(float(data.lastPressure) / 1000) + " bar";
@@ -174,7 +174,7 @@ void UI::draw(const UIData &data) {
 #endif
 
   // Shot timer
-  canvas->setFont(&lgfx::fonts::Font2);
+  canvas->setFont(&DejaVu12);
   canvas->setTextColor(TFT_WHITE, TFT_BLACK);
   float shotTime = float(data.shotTotalTime) / 1000;
   std::string shotTimeStr = std::to_string(shotTime) + "s";
@@ -187,7 +187,7 @@ void UI::draw(const UIData &data) {
 
   // Pressure warning
   if (showPressureWarning) {
-    canvas->setFont(&lgfx::fonts::Font8);
+    canvas->setFont(&DejaVu56);
     canvas->setTextColor(TFT_RED, TFT_BLACK);
     canvas->drawCenterString("STOP!", 160, 120);
 #ifdef SIMULATOR
@@ -199,7 +199,7 @@ void UI::draw(const UIData &data) {
 
   // Debug mode
   if (data.debugMode) {
-    canvas->setFont(&lgfx::fonts::Font2);
+    canvas->setFont(&DejaVu12);
     canvas->setTextColor(TFT_WHITE, TFT_BLACK);
     std::vector<std::string> debugStrings = {
         std::string("Pressure: ") + std::to_string(data.lastPressure),

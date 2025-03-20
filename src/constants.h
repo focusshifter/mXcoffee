@@ -5,6 +5,35 @@
 #include <vector>
 
 #ifdef SIMULATOR
+#define PROGMEM
+typedef struct {
+  uint16_t bitmapOffset;
+  uint8_t width;
+  uint8_t height;
+  uint8_t xAdvance;
+  int8_t xOffset;
+  int8_t yOffset;
+} GFXglyph;
+
+typedef struct {
+  uint8_t *bitmap;
+  GFXglyph *glyph;
+  uint16_t first;
+  uint16_t last;
+  uint8_t yAdvance;
+} GFXfont;
+
+// Include DejaVu fonts directly
+#include "fonts/DejaVu12.h"
+#include "fonts/DejaVu24.h"
+#include "fonts/DejaVu56.h"
+
+#else
+// For M5Unified, use M5GFX fonts but ensure compatibility
+#include <M5GFX.h>
+#endif
+
+#ifdef SIMULATOR
 #define TFT_WHITE 0xFFFF
 #define TFT_RED 0xF800
 #define TFT_ORANGE 0xFBE0
@@ -16,15 +45,6 @@
 #define TFT_BLACK 0x0000
 #define TFT_DARKGRAY 0x7BEF
 #define TFT_DARKGREY TFT_DARKGRAY
-
-// Simulator font stubs
-namespace lgfx {
-namespace fonts {
-extern const void *Font2;
-extern const void *Font4;
-extern const void *Font8;
-} // namespace fonts
-} // namespace lgfx
 #endif
 
 struct DeviceState {
