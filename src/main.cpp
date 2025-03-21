@@ -78,7 +78,7 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Setup: M5 initialized");
 
-  display.fillScreen(TFT_BLACK);
+  display.fillScreen(THEME_DARKBG);
   displayWrapper = new DisplayWrapper(display);
 
   String build = String("m5stack version ") + VERSION + " " + __DATE__ + " " + __TIME__ + " :)";
@@ -108,7 +108,7 @@ void setup() {
   Serial.println(ESP.getFreeHeap());
 
   m5Canvas.createSprite(display.width(), display.height());
-  m5Canvas.fillSprite(TFT_BLACK);
+  m5Canvas.fillSprite(THEME_DARKBG);
   Serial.println("Setup: Sprite created");
 
   if (!SPIFFS.begin(true)) {
@@ -126,14 +126,14 @@ void setup() {
     file = root.openNextFile();
   }
 
-  const char* fontPath = "/Dosis-Medium.ttf";
+  const char* fontPath = "/MoonGlossDisplayMedium.ttf";
   if (!SPIFFS.exists(fontPath)) {
-    Serial.println("Setup: /Dosis-Medium.ttf not found in SPIFFS");
+    Serial.println("Setup: /MoonGlossDisplayMedium.ttf not found in SPIFFS");
     while (1) delay(1000);
   }
   File fontFile = SPIFFS.open(fontPath, "r");
   if (!fontFile) {
-    Serial.println("Setup: Failed to open /Dosis-Medium.ttf");
+    Serial.println("Setup: Failed to open /MoonGlossDisplayMedium.ttf");
     while (1) delay(1000);
   }
   Serial.print("Font file size: ");
@@ -156,19 +156,22 @@ void setup() {
   fontRenderer.showCredit();
 
   fontRenderer.setDrawer(*m5Canvas.getCanvas());
+
+  fontRenderer.setCacheSize(1, 4, 96*1024);
+
   if (fontRenderer.loadFont(fontPath)) {  // Note: OFR returns 0 on success, non-zero on failure
-    Serial.println("Setup: Failed to load /Dosis-Medium.ttf with M5Canvas");
+    Serial.println("Setup: Failed to load /MoonGlossDisplayMedium.ttf with M5Canvas");
     Serial.println("Trying M5.Display as drawer...");
     fontRenderer.setDrawer(M5.Display);
     if (fontRenderer.loadFont(fontPath)) {
       Serial.println("Setup: Failed with M5.Display too");
       while (1) delay(1000);
     }
-    Serial.println("Setup: /Dosis-Medium.ttf loaded with M5.Display");
+    Serial.println("Setup: /MoonGlossDisplayMedium.ttf loaded with M5.Display");
   } else {
-    Serial.println("Setup: /Dosis-Medium.ttf loaded with M5Canvas");
+    Serial.println("Setup: /MoonGlossDisplayMedium.ttf loaded with M5Canvas");
   }
-  fontRenderer.setFontColor(TFT_WHITE);
+  fontRenderer.setFontColor(THEME_LIGHTTEXT);
   fontRenderer.setFontSize(12);
 
   fontRenderer.drawString("Test", 10, 10);
@@ -268,7 +271,7 @@ void loop() {
   }
   delay(2);
 
-  if (deviceState.lastRefreshTime + 20 < millis()) {
+  if (deviceState.lastRefreshTime + 5 < millis()) {
     deviceState.lastRefreshTime = millis();
     int16_t currentPressure = getPressure();
     if (deviceState.lastPressure == -1 || currentPressure != deviceState.lastPressure) {

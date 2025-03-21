@@ -22,6 +22,7 @@ SimulatorCanvas::SimulatorCanvas() {
     ttfFont = nullptr;
     
     // Try to load a default font for TTF rendering
+    // FIXME
     const char* defaultFontPath = "include/fonts/Dosis-Medium.ttf";
     ttfFont = TTF_OpenFont(defaultFontPath, fontSize);
     if (!ttfFont) {

@@ -5,39 +5,6 @@
 #include <vector>
 
 #ifdef SIMULATOR
-#define PROGMEM
-typedef struct {
-  uint16_t bitmapOffset;
-  uint8_t width;
-  uint8_t height;
-  uint8_t xAdvance;
-  int8_t xOffset;
-  int8_t yOffset;
-} GFXglyph;
-
-typedef struct {
-  uint8_t *bitmap;
-  GFXglyph *glyph;
-  uint16_t first;
-  uint16_t last;
-  uint8_t yAdvance;
-} GFXfont;
-
-// Include DejaVu fonts directly
-#include "fonts/DejaVu12.h"
-#include "fonts/DejaVu24.h"
-#include "fonts/DejaVu56.h"
-#else
-// For M5Unified, use M5GFX fonts but ensure compatibility
-#include <M5GFX.h>
-#endif
-
-#include "fonts/Dosis_Medium9pt7b.h"
-#include "fonts/Dosis_Medium12pt7b.h"
-#include "fonts/Dosis_Medium16pt7b.h"
-#include "fonts/Dosis_Medium24pt7b.h"
-
-#ifdef SIMULATOR
 #define TFT_WHITE 0xFFFF
 #define TFT_RED 0xF800
 #define TFT_ORANGE 0xFBE0
@@ -50,6 +17,31 @@ typedef struct {
 #define TFT_DARKGRAY 0x7BEF
 #define TFT_DARKGREY TFT_DARKGRAY
 #endif
+
+// Color theme
+#define THEME_LIGHTBG 0x9E78
+#define THEME_LIGHTTEXT 0xE7FF
+
+#define THEME_DARKBG 0x0105
+#define THEME_DARKTEXT 0x0986
+
+#define THEME_LIGHTACCENTBG 0x9E77
+#define THEME_LIGHTACCENTTEXT 0x0986
+
+// #define THEME_DARKACCENTBG 0x7AC8
+// #define THEME_DARKACCENTTEXT 0x7AC8
+
+#define THEME_DISABLEDBG 0x7A26
+#define THEME_DISABLEDTEXT 0x3124
+
+#define THEME_GRAPH_GOOD 0xB7FE
+#define THEME_GRAPH_WARNING 0xD54F
+#define THEME_GRAPH_BAD 0xD54F
+
+#define THEME_GRID_LINES 0x0A4A
+
+#define THEME_BAR_BG 0x0A4A
+
 
 struct DeviceState {
   bool isAsleep;
@@ -83,8 +75,3 @@ struct UIData {
   int16_t maxPressure;
   bool deviceConnected; // Added to match ui.cpp usage
 };
-
-const GFXfont FontBase9 = Dosis_Medium9pt7b;
-const GFXfont FontBase12 = Dosis_Medium12pt7b;
-const GFXfont FontBase16 = Dosis_Medium16pt7b;
-const GFXfont FontBase24 = Dosis_Medium24pt7b;
