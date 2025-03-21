@@ -29,6 +29,9 @@ public:
     virtual uint16_t color565(uint8_t r, uint8_t g, uint8_t b) = 0;
     virtual void pushSprite(int16_t x, int16_t y) = 0;
     virtual const char* getCurrentFontName() = 0; // Add this method
+    
+    // Method for OpenFontRender compatibility
+    virtual void* getCanvas() { return this; };
 };
 
 extern CanvasWrapper *canvas; // Declaration only

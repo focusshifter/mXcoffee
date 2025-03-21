@@ -16,6 +16,19 @@ SimulatorCanvas::SimulatorCanvas() {
     textFg = 0xFFFF; // White
     textBg = 0x0000; // Black
     currentFont = nullptr;
+    
+    // Initialize for OpenFontRender compatibility
+    fontSize = 12;
+    ttfFont = nullptr;
+    
+    // Try to load a default font for TTF rendering
+    const char* defaultFontPath = "include/fonts/Dosis-Medium.ttf";
+    ttfFont = TTF_OpenFont(defaultFontPath, fontSize);
+    if (!ttfFont) {
+        printf("WARNING: Could not load font %s: %s\n", defaultFontPath, TTF_GetError());
+    } else {
+        printf("Loaded TTF font: %s\n", defaultFontPath);
+    }
 }
 
 SimulatorCanvas::~SimulatorCanvas() {
@@ -23,6 +36,13 @@ SimulatorCanvas::~SimulatorCanvas() {
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    
+    // Clean up TTF resources
+    if (ttfFont) {
+        TTF_CloseFont(ttfFont);
+        ttfFont = nullptr;
+    }
+    
     TTF_Quit();
     SDL_Quit();
 }
@@ -58,6 +78,31 @@ void SimulatorCanvas::fillSprite(uint16_t color) {
 }
 
 void SimulatorCanvas::drawString(const char *str, int16_t x, int16_t y) {
+    // If we have a TTF font, use SDL_TTF for better text rendering
+    if (ttfFont && str) {
+        // Convert RGB565 to RGB for SDL
+        uint8_t r = ((textFg >> 11) & 0x1F) << 3;
+        uint8_t g = ((textFg >> 5) & 0x3F) << 2;
+        uint8_t b = (textFg & 0x1F) << 3;
+        
+        SDL_Color color = {r, g, b, 255};
+        SDL_Surface* textSurface = TTF_RenderText_Solid(ttfFont, str, color);
+        if (textSurface) {
+            SDL_Texture* textTexture = SDL_CreateTextureFromSurface(renderer, textSurface);
+            if (textTexture) {
+                SDL_Rect dstRect = {x, y, textSurface->w, textSurface->h};
+                SDL_UpdateTexture(texture, NULL, buffer, w * sizeof(uint32_t));
+                SDL_RenderCopy(renderer, texture, NULL, NULL);
+                SDL_RenderCopy(renderer, textTexture, NULL, &dstRect);
+                SDL_RenderPresent(renderer);
+                SDL_DestroyTexture(textTexture);
+            }
+            SDL_FreeSurface(textSurface);
+        }
+        return;
+    }
+    
+    // Fall back to bitmap font rendering if TTF is not available
     if (!currentFont || !str) return;
     int16_t cursorX = x;
     Serial_printf("Rendering string '%s' at (%d, %d) with font %p, first: %d, last: %d, yAdvance: %d\n",
@@ -190,6 +235,28 @@ void SimulatorCanvas::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t co
 
 const char* SimulatorCanvas::getCurrentFontName() {
     return "Dosis_Medium12pt7b (GFXfont)"; // Static string for simulator
+}
+
+void SimulatorCanvas::setFontSize(float size) {
+    // Only reload the font if the size has changed
+    if (size != fontSize) {
+        fontSize = static_cast<int16_t>(size);
+        
+        // Re-open the font with the new size if we have a valid TTF
+        if (ttfFont) {
+            TTF_CloseFont(ttfFont);
+            ttfFont = nullptr;
+        }
+        
+        const char* defaultFontPath = "include/fonts/Dosis-Medium.ttf";
+        ttfFont = TTF_OpenFont(defaultFontPath, fontSize);
+        if (!ttfFont) {
+            printf("WARNING: Could not load font %s at size %d: %s\n", 
+                  defaultFontPath, fontSize, TTF_GetError());
+        } else {
+            printf("Loaded TTF font: %s at size %d\n", defaultFontPath, fontSize);
+        }
+    }
 }
 
 #endif  // SIMULATOR

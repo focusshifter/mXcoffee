@@ -7,6 +7,7 @@
 #include "../constants.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <OpenFontRender.h> // Add OpenFontRender inclusion
 
 class SimulatorCanvas : public CanvasWrapper {
 private:
@@ -17,6 +18,8 @@ private:
     int16_t w, h;
     uint16_t textFg, textBg;  // Match original declaration
     const GFXfont* currentFont;  // Use GFXfont from constants.h
+    int16_t fontSize;  // For OpenFontRender compatibility
+    TTF_Font* ttfFont; // For rendering text with TTF
 
 public:
     SimulatorCanvas();
@@ -37,6 +40,11 @@ public:
     uint16_t color565(uint8_t r, uint8_t g, uint8_t b) override;
     void pushSprite(int16_t x, int16_t y) override;
     const char* getCurrentFontName() override; // Ensure this matches CanvasWrapper
+    void* getCanvas() override { return this; }
+    
+    // OpenFontRender compatibility methods
+    void setFontSize(float size);
+    TTF_Font* getTTFFont() { return ttfFont; }
 
 private:
     void setPixel(int32_t x, int32_t y, uint16_t color);  // Helper method

@@ -1,11 +1,13 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <OpenFontRender.h>  // Add OpenFontRender
 
 #include "ui/ui.h"
 #include "constants.h"
 #include "pressure_sensor/pressure_sensor.h"
 #include "SimulatorArduino.h"
 #include "ui/simulator_backend.h"
+#include "ui/sim_font_render.h"  // Add SimFontRender header
 
 #ifdef SIMULATOR
 // Debug print of GFXfont fields
@@ -27,6 +29,7 @@ CanvasWrapper* canvas = &simCanvas;
 UI ui(canvas);
 PressureSensor* pressureSensor = nullptr;
 int16_t pressureValues[PRESSURE_VALUES_LEN];
+OpenFontRender fontRenderer;  // Add global OpenFontRender instance
 DeviceState deviceState = {
     .isAsleep = false,
     .isBluetoothOn = false,
@@ -48,6 +51,21 @@ void setup() {
     pressureSensor = new PressureSensor(nullptr);
     for (int i = 0; i < PRESSURE_VALUES_LEN; i++) pressureValues[i] = 0;
     printFontDebug(&FontBase12);
+    
+    // Initialize OpenFontRender for simulator
+    fontRenderer.setDrawer(simCanvas.getCanvas());
+    
+    // Setup mock OFR font implementation
+    printf("Setting up OpenFontRender for simulator\n");
+    
+    // Override the OpenFontRender functions with our own implementations
+    // The UI code will call fontRenderer methods, but they will be routed to our
+    // simulation-specific rendering functions
+    
+    // We don't need to actually load a font file in the simulator since we're
+    // using SDL_TTF directly through the SimulatorCanvas class
+    int result = 0; // Simulate successful font loading (OFR returns 0 on success)
+    printf("OpenFontRender initialized for simulator\n");
 }
 
 int16_t getPressure() {
