@@ -37,28 +37,22 @@ void M5UnifiedCanvas::createSprite(int16_t w, int16_t h) {
 
 int16_t M5UnifiedCanvas::width() {
     int16_t w = canvas->width();
-    Serial.print("M5UnifiedCanvas: width() called, returning ");
-    Serial.println(w);
     return w;
 }
 
 int16_t M5UnifiedCanvas::height() {
     int16_t h = canvas->height();
-    Serial.print("M5UnifiedCanvas: height() called, returning ");
-    Serial.println(h);
     return h;
 }
 
-void M5UnifiedCanvas::fillSprite(uint16_t color) {
-    Serial.print("M5UnifiedCanvas: Filling sprite with color=");
-    Serial.println(color, HEX);
+void M5UnifiedCanvas::fillSprite(uint32_t color) {
     if (!canvas || !canvas->width() || !canvas->height()) {
         Serial.println("M5UnifiedCanvas: Error - Sprite not initialized before fillSprite!");
         return;
     }
     canvas->fillSprite(color);
 }
-void M5UnifiedCanvas::drawLine(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color) {
+void M5UnifiedCanvas::drawLine(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint32_t color) {
     if (!canvas->width() || !canvas->height()) {
         Serial.println("M5UnifiedCanvas: Error - Sprite not initialized before drawLine!");
         return;
@@ -66,7 +60,7 @@ void M5UnifiedCanvas::drawLine(int16_t x1, int16_t y1, int16_t x2, int16_t y2, u
     canvas->drawLine(x1, y1, x2, y2, color);
 }
 
-void M5UnifiedCanvas::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+void M5UnifiedCanvas::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint32_t color) {
     if (!canvas->width() || !canvas->height()) {
         Serial.println("M5UnifiedCanvas: Error - Sprite not initialized before drawRect!");
         return;
@@ -74,17 +68,7 @@ void M5UnifiedCanvas::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint1
     canvas->drawRect(x, y, w, h, color);
 }
 
-void M5UnifiedCanvas::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-    Serial.print("M5UnifiedCanvas: Filling rect at (");
-    Serial.print(x);
-    Serial.print(", ");
-    Serial.print(y);
-    Serial.print(") with width=");
-    Serial.print(w);
-    Serial.print(", height=");
-    Serial.print(h);
-    Serial.print(", color=");
-    Serial.println(color, HEX);
+void M5UnifiedCanvas::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint32_t color) {
     if (!canvas->width() || !canvas->height()) {
         Serial.println("M5UnifiedCanvas: Error - Sprite not initialized before fillRect!");
         return;
@@ -92,7 +76,7 @@ void M5UnifiedCanvas::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint1
     canvas->fillRect(x, y, w, h, color);
 }
 
-void M5UnifiedCanvas::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
+void M5UnifiedCanvas::drawFastHLine(int16_t x, int16_t y, int16_t w, uint32_t color) {
     if (!canvas->width() || !canvas->height()) {
         Serial.println("M5UnifiedCanvas: Error - Sprite not initialized before drawFastHLine!");
         return;
@@ -100,66 +84,52 @@ void M5UnifiedCanvas::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t co
     canvas->drawFastHLine(x, y, w, color);
 }
 
-void M5UnifiedCanvas::drawString(const char *str, int16_t x, int16_t y) {
-    Serial.print("M5UnifiedCanvas: Drawing string '");
-    Serial.print(str);
-    Serial.print("' at (");
-    Serial.print(x);
-    Serial.print(", ");
-    Serial.print(y);
-    Serial.println(")");
+void M5UnifiedCanvas::drawString(const String& string, int16_t x, int16_t y) {
     if (!canvas->width() || !canvas->height()) {
         Serial.println("M5UnifiedCanvas: Error - Sprite not initialized before drawString!");
         return;
     }
-    canvas->drawString(str, x, y);
+    canvas->drawString(string, x, y);
 }
 
-void M5UnifiedCanvas::drawRightString(const char *str, int16_t x, int16_t y) {
+void M5UnifiedCanvas::drawRightString(const String& string, int16_t x, int16_t y) {
     if (!canvas->width() || !canvas->height()) {
         Serial.println("M5UnifiedCanvas: Error - Sprite not initialized before drawRightString!");
         return;
     }
-    canvas->drawRightString(str, x, y);
+    canvas->drawRightString(string, x, y);
 }
 
-void M5UnifiedCanvas::drawCenterString(const char *str, int16_t x, int16_t y) {
+void M5UnifiedCanvas::drawCenterString(const String& string, int16_t x, int16_t y) {
     if (!canvas->width() || !canvas->height()) {
         Serial.println("M5UnifiedCanvas: Error - Sprite not initialized before drawCenterString!");
         return;
     }
-    canvas->drawCenterString(str, x, y);
+    canvas->drawCenterString(string, x, y);
 }
 
 void M5UnifiedCanvas::setFont(const void *font) {
     canvas->setFont(reinterpret_cast<const lgfx::IFont*>(font));
-    Serial.print("Current font after set: ");
-    Serial.println(getCurrentFontName());
 }
 
-void M5UnifiedCanvas::setTextColor(uint16_t fg, uint16_t bg) {
-    Serial.print("M5UnifiedCanvas: Setting text color to fg=");
-    Serial.print(fg, HEX);
-    Serial.print(", bg=");
-    Serial.println(bg, HEX);
+void M5UnifiedCanvas::loadFont(const uint8_t* array) {
+    canvas->loadFont(array);
+}
+
+void M5UnifiedCanvas::setTextColor(uint32_t fg, uint32_t bg) {
     canvas->setTextColor(fg, bg);
 }
 
-uint16_t M5UnifiedCanvas::color565(uint8_t r, uint8_t g, uint8_t b) {
-    return canvas->color565(r, g, b);
+uint32_t M5UnifiedCanvas::color888(uint8_t r, uint8_t g, uint8_t b) {
+    return canvas->color888(r, g, b);
 }
 
 void M5UnifiedCanvas::pushSprite(int16_t x, int16_t y) {
-    Serial.print("M5UnifiedCanvas: Pushing sprite at x=");
-    Serial.print(x);
-    Serial.print(", y=");
-    Serial.println(y);
     if (!canvas->width() || !canvas->height()) {
         Serial.println("M5UnifiedCanvas: Error - Sprite not initialized before pushSprite!");
         return;
     }
     canvas->pushSprite(x, y);
-    Serial.println("M5UnifiedCanvas: pushSprite completed");
 }
 
 const char* M5UnifiedCanvas::getCurrentFontName() {

@@ -48,7 +48,7 @@ SimulatorCanvas::~SimulatorCanvas() {
     SDL_Quit();
 }
 
-void SimulatorCanvas::setPixel(int32_t x, int32_t y, uint16_t color) {
+void SimulatorCanvas::setPixel(int32_t x, int32_t y, uint32_t color) {
     if (x < 0 || x >= w || y < 0 || y >= h) return;
     uint8_t r = ((color >> 11) & 0x1F) << 3;  // 5-bit R to 8-bit
     uint8_t g = ((color >> 5) & 0x3F) << 2;   // 6-bit G to 8-bit
@@ -70,7 +70,7 @@ int16_t SimulatorCanvas::width() { return w; }
 
 int16_t SimulatorCanvas::height() { return h; }
 
-void SimulatorCanvas::fillSprite(uint16_t color) {
+void SimulatorCanvas::fillSprite(uint32_t color) {
     uint8_t r = ((color >> 11) & 0x1F) << 3;
     uint8_t g = ((color >> 5) & 0x3F) << 2;
     uint8_t b = (color & 0x1F) << 3;
@@ -180,7 +180,7 @@ void SimulatorCanvas::setFont(const void* font) {
     }
 }
 
-void SimulatorCanvas::setTextColor(uint16_t fg, uint16_t bg) {
+void SimulatorCanvas::setTextColor(uint32_t fg, uint32_t bg) {
     textFg = fg;
     textBg = bg;
     Serial_printf("Set text color: fg=0x%04X, bg=0x%04X\n", fg, bg);
@@ -199,7 +199,7 @@ void SimulatorCanvas::pushSprite(int16_t x, int16_t y) {
     Serial_printf("Updated texture with buffer %p, size %dx%d at (%d, %d)\n", buffer, w, h, x, y);
 }
 
-void SimulatorCanvas::drawLine(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint16_t color) {
+void SimulatorCanvas::drawLine(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint32_t color) {
     int16_t dx = abs(x2 - x1), sx = x1 < x2 ? 1 : -1;
     int16_t dy = -abs(y2 - y1), sy = y1 < y2 ? 1 : -1;
     int16_t err = dx + dy, e2;
@@ -213,14 +213,14 @@ void SimulatorCanvas::drawLine(int16_t x1, int16_t y1, int16_t x2, int16_t y2, u
     }
 }
 
-void SimulatorCanvas::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+void SimulatorCanvas::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint32_t color) {
     drawLine(x, y, x + w - 1, y, color);
     drawLine(x, y + h - 1, x + w - 1, y + h - 1, color);
     drawLine(x, y, x, y + h - 1, color);
     drawLine(x + w - 1, y, x + w - 1, y + h - 1, color);
 }
 
-void SimulatorCanvas::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+void SimulatorCanvas::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint32_t color) {
     for (int16_t i = x; i < x + w; i++) {
         for (int16_t j = y; j < y + h; j++) {
             setPixel(i, j, color);
@@ -228,7 +228,7 @@ void SimulatorCanvas::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint1
     }
 }
 
-void SimulatorCanvas::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
+void SimulatorCanvas::drawFastHLine(int16_t x, int16_t y, int16_t w, uint32_t color) {
     for (int16_t i = x; i < x + w; i++) {
         setPixel(i, y, color);
     }
