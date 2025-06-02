@@ -31,7 +31,7 @@ BLEBattery *bleBattery = nullptr;
 OEPLog *bleLog = nullptr;
 OEPPressure *blePressure = nullptr;
 
-DeviceState deviceState = {
+DeviceState defaultDeviceState = {
     .isAsleep = false,
     .isBluetoothOn = false,
     .deviceConnected = false,
@@ -49,6 +49,8 @@ DeviceState deviceState = {
     .lastShotWeight = 0,
     .flowRate = 0.0f
 };
+
+DeviceState deviceState = defaultDeviceState;
 
 int16_t pressureValues[PRESSURE_VALUES_LEN];
 
@@ -282,5 +284,12 @@ void loop() {
       playBtOffSound();
     }
     Serial.println("Loop: Bluetooth toggled");
+  }
+  if (M5.BtnC.wasPressed()) {
+    // Reset state
+    deviceState = defaultDeviceState;
+    std::fill(pressureValues, pressureValues + PRESSURE_VALUES_LEN, 0);
+    Serial.println("Loop: State reset");
+    delay(1000);
   }
 }
