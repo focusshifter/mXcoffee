@@ -62,11 +62,16 @@ struct DeviceState {
   bool debugMode;
   unsigned long lastRefreshTime;
   unsigned long lastActivityTime;
+  unsigned long lastWeightUpdateTime;  // For flow rate calculation
   int16_t lastPressure;
   unsigned long timerStartTime;
   unsigned long shotTotalTime;
   bool isTimerRunning;
   void *pServer;
+
+  unsigned long shotWeight;     // in grams
+  unsigned long lastShotWeight;  // Previous weight for flow rate calculation
+  float flowRate;               // in grams/second
 };
 
 const int16_t PRESSURE_VALUES_LEN = 160;
@@ -84,5 +89,7 @@ struct UIData {
   int16_t displayWidth;
   int16_t displayHeight;
   int16_t maxPressure;
-  bool deviceConnected; // Added to match ui.cpp usage
+  bool deviceConnected;
+  unsigned long shotWeight;  // in grams
+  float flowRate;           // in grams/second
 };

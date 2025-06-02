@@ -39,11 +39,15 @@ DeviceState deviceState = {
     .debugMode = false,
     .lastRefreshTime = 0,
     .lastActivityTime = 0,
+    .lastWeightUpdateTime = 0,
     .lastPressure = -1,
     .timerStartTime = 0,
     .shotTotalTime = 0,
     .isTimerRunning = false,
-    .pServer = nullptr
+    .pServer = nullptr,
+    .shotWeight = 0,
+    .lastShotWeight = 0,
+    .flowRate = 0.0f
 };
 
 int16_t pressureValues[PRESSURE_VALUES_LEN];
@@ -214,6 +218,31 @@ void loop() {
     setTimer(currentPressure);
     sendToBle(currentPressure);
 
+    // Update weight (mock: 2g per second when pressure > 1000)
+    unsigned long currentTime = millis();
+    if (currentPressure > 1000) {
+      if (deviceState.lastWeightUpdateTime == 0) {
+        deviceState.lastWeightUpdateTime = currentTime;
+      } else {
+        // Calculate time delta in seconds
+        float timeDelta = (currentTime - deviceState.lastWeightUpdateTime) / 1000.0f;
+        if (timeDelta >= 1.0f) {  // Only update weight every second
+          deviceState.lastShotWeight = deviceState.shotWeight;
+          deviceState.shotWeight += 2;  // Add 2g per second
+          
+          // Calculate flow rate (g/s)
+          if (deviceState.lastShotWeight > 0) {
+            float weightDelta = deviceState.shotWeight - deviceState.lastShotWeight;
+            deviceState.flowRate = weightDelta / timeDelta;
+          }
+          
+          deviceState.lastWeightUpdateTime = currentTime;
+        }
+      }
+    } else {
+      deviceState.lastWeightUpdateTime = 0;
+    }
+
     UIData data = {
         .pressureValues = {0},
         .lastPressure = currentPressure,
@@ -226,7 +255,9 @@ void loop() {
         .displayWidth = static_cast<int16_t>(M5.Display.width()),
         .displayHeight = static_cast<int16_t>(M5.Display.height()),
         .maxPressure = pressureSensor->getMaxPressure(),
-        .deviceConnected = deviceState.deviceConnected
+        .deviceConnected = deviceState.deviceConnected,
+        .shotWeight = deviceState.shotWeight,
+        .flowRate = deviceState.flowRate
     };
     std::copy(pressureValues, pressureValues + PRESSURE_VALUES_LEN, data.pressureValues);
     ui.draw(data);

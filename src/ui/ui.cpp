@@ -126,12 +126,17 @@ void UI::draw(const UIData &data) {
 
   // Panel counters
   canvas->setTextColor(THEME_PANEL_TEXT, THEME_PANEL_INNER_BG);
+  
+  canvas->loadFont(MoonGloss_16);
+  String weightStr = String(data.shotWeight) + "g";
+  canvas->drawRightString(weightStr, 200, 30);
+  String flowStr = String(data.flowRate, 1) + " g/s";
+  canvas->drawRightString(flowStr, 200, 50);
+  
   canvas->loadFont(MoonGloss_48);
 
   // Timer text
   canvas->drawRightString(String((float(data.shotTotalTime) / 1000), 1), 92, 25);
-  // Weight text
-  canvas->drawRightString(String("NA", 1), 202, 25);
   // Pressure text
   canvas->drawRightString(String((float(data.lastPressure) / 1000), 1), 312, 25);
 
