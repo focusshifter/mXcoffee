@@ -1,10 +1,10 @@
 #![no_std]
 #![no_main]
 
-use esp_hal::clock::CpuClock;
+use esp_hal::delay::Delay;
+use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::main;
-use esp_hal::time::{Duration, Instant};
-use esp_hal::timer::timg::TimerGroup;
+use esp_println::println;
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
@@ -15,25 +15,21 @@ extern crate alloc;
 
 #[main]
 fn main() -> ! {
-    // generator version: 0.3.1
-
-    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    // Initialize peripherals
+    let config = esp_hal::Config::default();
     let peripherals = esp_hal::init(config);
 
     esp_alloc::heap_allocator!(size: 72 * 1024);
 
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    let _init = esp_wifi::init(
-        timg0.timer0,
-        esp_hal::rng::Rng::new(peripherals.RNG),
-        peripherals.RADIO_CLK,
-    )
-    .unwrap();
+    // Set GPIO0 as an output, and set its state high initially.
+    let mut led = Output::new(peripherals.GPIO0, Level::High, OutputConfig::default());
+
+    let delay = Delay::new();
 
     loop {
-        let delay_start = Instant::now();
-        while delay_start.elapsed() < Duration::from_millis(500) {}
+        led.toggle();
+        delay.delay_millis(1000);
+        println!("TICK");
     }
 
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0-beta.0/examples/src/bin
 }

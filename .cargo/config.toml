@@ -1,5 +1,5 @@
 [target.xtensa-esp32-none-elf]
-runner = "probe-rs run --chip=esp32 --always-print-stacktrace --no-location --catch-hardfault"
+runner = "espflash flash --monitor"
 
 [env]
 
