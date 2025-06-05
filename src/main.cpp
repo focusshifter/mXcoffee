@@ -1,4 +1,3 @@
-#include "ui/m5unified_backend.h"
 #include <Arduino.h>
 #include <BLE2902.h>
 #include <BLEDevice.h>
@@ -23,9 +22,7 @@ const unsigned long AUTO_OFF_TIMEOUT = 10 * 60 * 1000;
 
 M5GFX display;
 DisplayWrapper *displayWrapper = nullptr;
-M5UnifiedCanvas m5Canvas(&M5.Display);
-CanvasWrapper *canvas = &m5Canvas;
-UI ui(canvas);
+UI ui(&display);
 PressureSensor *pressureSensor = nullptr;
 BLEBattery *bleBattery = nullptr;
 OEPLog *bleLog = nullptr;
@@ -110,12 +107,7 @@ void setup() {
   Serial.print("Free heap: ");
   Serial.println(ESP.getFreeHeap());
 
-  m5Canvas.createSprite(display.width(), display.height());
-  m5Canvas.fillSprite(THEME_DARKBG);
   Serial.println("Setup: Sprite created");
-
-  // Load font
-  canvas->loadFont(MoonGloss_16);
 
   Serial.println("Setup: Complete");
 }

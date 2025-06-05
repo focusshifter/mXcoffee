@@ -1,13 +1,15 @@
 #pragma once
 
 #include "../constants.h"
-#include "canvas_wrapper.h"
+#include <M5GFX.h>
 
 class UI {
-public:
-  UI(CanvasWrapper *canvas) : canvas(canvas) {}
-  void draw(const UIData &data);
-
 private:
-  CanvasWrapper *canvas;
+  M5Canvas *canvas;
+  M5GFX *display;
+
+public:
+  UI(M5GFX *display);
+  ~UI();
+  void draw(const UIData &data);
 };

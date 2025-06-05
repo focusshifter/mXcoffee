@@ -4,20 +4,6 @@
 #include <string>
 #include <vector>
 
-#ifdef SIMULATOR
-#define TFT_WHITE 0xFFFF
-#define TFT_RED 0xF800
-#define TFT_ORANGE 0xFBE0
-#define TFT_YELLOW 0xFFE0
-#define TFT_GREEN 0x07E0
-#define TFT_CYAN 0x07FF
-#define TFT_BLUE 0x001F
-#define TFT_PURPLE 0x781F
-#define TFT_BLACK 0x0000
-#define TFT_DARKGRAY 0x7BEF
-#define TFT_DARKGREY TFT_DARKGRAY
-#endif
-
 #define SMOOTH_FONT
 
 

@@ -4,11 +4,9 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 
-#ifdef SIMULATOR
-#include "SimulatorArduino.h"
-#else
+
 #include <Arduino.h>
-#endif
+
 
 class ZeroCallback : public BLECharacteristicCallbacks {
 private:
@@ -40,11 +38,8 @@ BLEDescriptor ZeroDescriptor(BLE_PRESSURE_ZERO_DESCRIPTOR);
 void OEPPressure::updatePressure(int16_t newPressure) {
   this->_lastPressureReading = newPressure;
   uint16_t pressureVal = this->getReportablePresureValue();
-#ifdef SIMULATOR
-  Serial_printf("pressureVal: %x\r\n", pressureVal);
-#else
+
   Serial.printf("pressureVal: %x\r\n", pressureVal);
-#endif
   PressureCharacteristic.setValue(pressureVal);
   PressureCharacteristic.notify();
   this->_updatesSent = (_updatesSent + 1) % 16;
@@ -55,11 +50,8 @@ void OEPPressure::resetUpdateCounter() { this->_updatesSent = 0; }
 uint16_t OEPPressure::getReportablePresureValue() const {
   auto offsetPressure =
       int16_t(this->_lastPressureReading - this->_pressureOffset);
-#ifdef SIMULATOR
-  Serial_printf("got reportable pressure %d\r\n", offsetPressure);
-#else
-  Serial.printf("got reportable pressure %d\r\n", offsetPressure);
-#endif
+
+  // Serial.printf("got reportable pressure %d\r\n", offsetPressure);
   return (uint16_t)(offsetPressure << 8 & 0xff00) |
          (offsetPressure >> 8 & 0xff);
 }

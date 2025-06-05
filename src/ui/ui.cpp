@@ -4,18 +4,30 @@
 #include "utils/profiler.h"
 #include <string>
 
-#ifdef SIMULATOR
-#include "SimulatorArduino.h"
-#else
 #include <Arduino.h>
 #include <M5GFX.h>
-#endif
 
 #include "fonts/MoonGloss_16.h"
 #include "fonts/MoonGloss_48.h"
 
 const int16_t PRESSURE_GRID_VALUES[] = {9, 6, 3, 0};
 const int16_t PRESSURE_GRID_COUNT = 4;
+
+UI::UI(M5GFX *display) {
+  Serial.println("UI: Constructor called");
+
+  canvas = new M5Canvas(display);
+  if (!canvas) {
+      Serial.println("UI: Failed to allocate M5Canvas!");
+      while (1) delay(1000);
+  }
+  // canvas->setColorDepth(32);
+  canvas->setPsram(true);
+}
+
+UI::~UI() {
+  delete canvas;
+}
 
 void UI::draw(const UIData &data) {
   Profiler p("UI::draw");
