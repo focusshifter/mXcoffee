@@ -75,15 +75,18 @@ void setup() {
   M5.Speaker.begin();
   M5.Speaker.setVolume(120);
   display = M5.Lcd;
+
+  display.setColorDepth(24);
+  display.setSwapBytes(false);
+
   Serial.begin(115200);
   Serial.println("Setup: M5 initialized");
 
   display.fillScreen(THEME_DARKBG);
-  displayWrapper = new DisplayWrapper(display);
 
   String build = String("m5stack version ") + VERSION + " " + __DATE__ + " " + __TIME__ + " :)";
-  displayWrapper->drawString(build, 10, 10);
-  displayWrapper->drawCenterString("Ready to brew!", displayWrapper->width() / 2, displayWrapper->height() / 2);
+  display.drawString(build, 10, 10);
+  display.drawCenterString("Ready to brew!", display.width() / 2, display.height() / 2);
   Serial.println("Setup: Display initialized");
 
   M5.Power.setExtOutput(true);

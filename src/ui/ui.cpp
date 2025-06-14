@@ -13,7 +13,7 @@
 const int16_t PRESSURE_GRID_VALUES[] = {9, 6, 3, 0};
 const int16_t PRESSURE_GRID_COUNT = 4;
 
-UI::UI(M5GFX *display) {
+UI::UI(M5GFX *display) : display(display) {
   Serial.println("UI: Constructor called");
 
   canvas = new M5Canvas(display);
@@ -21,15 +21,32 @@ UI::UI(M5GFX *display) {
       Serial.println("UI: Failed to allocate M5Canvas!");
       while (1) delay(1000);
   }
-  // canvas->setColorDepth(32);
+
+  // Use external PSRAM for the sprite buffer when available
   canvas->setPsram(true);
+  // We will create the sprite later in the first call to draw(), once the
+  // display has been initialised by M5.begin() and we know its real size.
+  canvas->pushSprite(0, 0);
 }
 
 UI::~UI() {
-  delete canvas;
+  if (canvas) {
+      canvas->deleteSprite();
+      delete canvas;
+  }
 }
 
 void UI::draw(const UIData &data) {
+  // Lazily create the full-screen sprite on first draw because M5.begin()
+  // (which sets the real display dimensions) runs *after* the global UI
+  // instance is constructed.
+  if (canvas->width() == 0 || canvas->height() == 0) {
+    canvas->setPsram(true);
+    canvas->setColorDepth(24);
+    canvas->setSwapBytes(false);
+    canvas->createSprite(data.displayWidth, data.displayHeight);
+  }
+
   Profiler p("UI::draw");
   const int16_t graphStartX = 10;
   const int16_t graphStartY = 90;
@@ -101,7 +118,7 @@ void UI::draw(const UIData &data) {
     int16_t pressureAtY = (y * (maxPressure) / audioBarHeight);
     uint32_t lineColor = (pressureAtY <= 6000) ? canvas->color888((pressureAtY * (96 - 64) / 6000) + 64, (pressureAtY * (96 - 64) / 6000) + 64, (pressureAtY * (96 - 64) / 6000) + 64) :
                          (pressureAtY <= 7000) ? canvas->color888(96 - ((pressureAtY - 6000) * 96 / 1000), 96 + ((pressureAtY - 6000) * (255 - 96) / 1000), 96 - ((pressureAtY - 6000) * 96 / 1000)) :
-                         (pressureAtY <= 8000) ? TFT_GREEN :
+                         (pressureAtY <= 8000) ? canvas->color888(0, 255, 0) :
                          (pressureAtY <= 8500) ? canvas->color888((pressureAtY - 8000) * 255 / 500, 255, 0) :
                          (pressureAtY <= 10000) ? canvas->color888(255, 255 - ((pressureAtY - 8500) * 255 / 1500), 0) : TFT_RED;
     canvas->drawFastHLine(audioBarX, audioBarY + audioBarHeight - y, audioBarWidth, lineColor);
