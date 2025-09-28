@@ -6,18 +6,75 @@ use embedded_graphics::{
     prelude::*,
     text::{Alignment, Text},
 };
+use embedded_hal::i2c::I2c;
 use esp_idf_hal::gpio::PinDriver;
 use esp_idf_hal::prelude::*;
 use esp_idf_hal::spi::{config, SpiDeviceDriver, SpiDriver, SpiDriverConfig, SPI2};
+use esp_idf_sys::EspError;
 use mipidsi::{Builder, models::ILI9342CRgb565};
 use mipidsi::options::{ColorOrder, ColorInversion};
 use std::{thread, time::Duration};
 
-use axp2101::{
-    Axp2101,
-    Aldo2,
-    Regulator as _,
-};
+use esp_idf_hal::i2c::{I2cDriver, I2cConfig};
+
+const AXP2101_ADDR: u8 = 0x34;
+
+fn configure_core2_power(i2c: &mut I2cDriver<'_>) -> Result<(), EspError> {
+    const REG_DCDC_CTRL: u8 = 0x80;
+    const REG_DCDC1_VOLTAGE: u8 = 0x82;
+    const REG_DCDC3_VOLTAGE: u8 = 0x84;
+    const REG_LDO_CTRL: u8 = 0x90;
+    const REG_ALDO2_VOLTAGE: u8 = 0x93;
+    const REG_ALDO4_VOLTAGE: u8 = 0x95;
+    const REG_BLDO1_VOLTAGE: u8 = 0x96;
+
+    const DCDC1_MASK: u8 = 1 << 0;
+    const DCDC3_MASK: u8 = 1 << 2;
+    const ALDO2_MASK: u8 = 1 << 1;
+    const ALDO4_MASK: u8 = 1 << 3;
+    const BLDO1_MASK: u8 = 1 << 4;
+
+    fn write_reg(i2c: &mut I2cDriver<'_>, reg: u8, value: u8) -> Result<(), EspError> {
+        I2c::write(i2c, AXP2101_ADDR, &[reg, value]).map_err(|err| err.cause())
+    }
+
+    fn modify_reg(i2c: &mut I2cDriver<'_>, reg: u8, set_mask: u8) -> Result<(), EspError> {
+        let mut current = [0u8; 1];
+        I2c::write_read(i2c, AXP2101_ADDR, &[reg], &mut current).map_err(|err| err.cause())?;
+        let value = current[0] | set_mask;
+        I2c::write(i2c, AXP2101_ADDR, &[reg, value]).map_err(|err| err.cause())
+    }
+
+    fn ldo_voltage_to_reg(voltage_mv: u16) -> u8 {
+        let clamped = voltage_mv.clamp(500, 3500);
+        ((clamped - 500) / 100) as u8
+    }
+
+    fn dcdc1_voltage_to_reg(voltage_mv: u16) -> u8 {
+        let clamped = voltage_mv.clamp(1500, 3400);
+        ((clamped - 1500) / 100) as u8
+    }
+
+    fn dcdc3_voltage_to_reg(voltage_mv: u16) -> u8 {
+        let clamped = voltage_mv.clamp(1500, 3400);
+        if clamped <= 1540 {
+            (((clamped - 1220) / 20) as u8) + 0b0100_0111
+        } else {
+            (((clamped - 1600) / 100) as u8) + 0b0101_1000
+        }
+    }
+
+    write_reg(i2c, REG_DCDC1_VOLTAGE, dcdc1_voltage_to_reg(3300))?;
+    write_reg(i2c, REG_DCDC3_VOLTAGE, dcdc3_voltage_to_reg(3300))?;
+    modify_reg(i2c, REG_DCDC_CTRL, DCDC1_MASK | DCDC3_MASK)?;
+
+    write_reg(i2c, REG_ALDO2_VOLTAGE, ldo_voltage_to_reg(3300))?;
+    write_reg(i2c, REG_ALDO4_VOLTAGE, ldo_voltage_to_reg(3300))?;
+    write_reg(i2c, REG_BLDO1_VOLTAGE, ldo_voltage_to_reg(3300))?;
+    modify_reg(i2c, REG_LDO_CTRL, ALDO2_MASK | ALDO4_MASK | BLDO1_MASK)?;
+
+    Ok(())
+}
 
 fn main() {
     let peripherals = esp_idf_hal::peripherals::Peripherals::take().unwrap();
@@ -28,39 +85,19 @@ fn main() {
     let mut lcd_reset_pin = PinDriver::output(gpios.gpio33).unwrap(); // RESET = GPIO33
     println!("Pin drivers for DC and RESET ready");
 
-    // --- Enable BLDO1 (LCD backlight power) via AXP192 PMIC ---
-    use esp_idf_hal::i2c::{I2cDriver, I2cConfig};
     println!("About to init I2C...");
     let mut i2c = I2cDriver::new(
         peripherals.i2c0,
         gpios.gpio21,
         gpios.gpio22,
-        &I2cConfig::new().baudrate(100_000.Hz()),
+        &I2cConfig::new().baudrate(400_000.Hz()),
     ).unwrap();
     println!("I2C init done");
 
-    // --- AXP2101 power rails setup using axp2101-rs crate ---
-    println!("AXP2101: Creating driver instance...");
-    let mut axp = Axp2101::new(i2c);
+    println!("Configuring AXP2101 power rails...");
+    configure_core2_power(&mut i2c).expect("Failed to configure AXP2101");
+    println!("AXP2101 rails configured");
 
-    let mut aldo2: Aldo2<_> = axp.into();
-
-    // --- Set ALDO2 (LCD logic) to 3.3V (if supported) ---
-    let res_aldo2_v = axp.write_register(0x28, 0xF8); // 3.3V for ALDO2 (see datasheet)
-    println!("AXP2101: Set ALDO2 voltage to 3.3V (reg 0x28): {:?}", res_aldo2_v);
-
-    // --- Set BLDO1 (backlight) to 3.0V (if supported) ---
-    let res_bldo1_v = axp.write_register(0x12, 0x01); // Enable BLDO1 (bit 0)
-    println!("AXP2101: Enable BLDO1 (reg 0x12, bit 0): {:?}", res_bldo1_v);
-
-    // Optionally print status (if available)
-    if let Ok(v) = axp.battery_voltage() {
-        println!("AXP2101: Battery voltage: {} mV", v);
-    }
-    if let Ok(p) = axp.battery_percent() {
-        println!("AXP2101: Battery percent: {}%", p);
-    }
-    println!("AXP2101 power rails setup complete (manual register writes)");
 
     // Initialize back light of the display
     let mut pin_lcd_blk = PinDriver::output(gpios.gpio32).unwrap(); // BL = GPIO32
