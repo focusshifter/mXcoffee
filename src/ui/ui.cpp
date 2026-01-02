@@ -157,7 +157,7 @@ void UI::draw(const UIData &data) {
   canvas->setTextColor(THEME_PANEL_TEXT, THEME_PANEL_INNER_BG);
   
   canvas->loadFont(MoonGloss_16);
-  String weightStr = String(data.shotWeight) + "g";
+  String weightStr = String(data.shotWeight, 1) + "g";
   canvas->drawRightString(weightStr, 200, 30);
   String flowStr = String(data.flowRate, 1) + " g/s";
   canvas->drawRightString(flowStr, 200, 50);
@@ -194,6 +194,23 @@ void UI::draw(const UIData &data) {
   //       canvas->printf(debugStrings[i].c_str());
   //   }
   // }
+
+  canvas->loadFont(MoonGloss_16);
+  canvas->setTextColor(THEME_LIGHTACCENTTEXT, THEME_LIGHTACCENTBG);
+  String btStatus = data.isBluetoothOn ? "BT ON" : "BT OFF";
+  canvas->drawString(btStatus, 4, data.displayHeight - 18);
+  String scaleStatus = data.scaleConnected
+                           ? String("Scale: ") + String(data.scaleName.c_str())
+                           : String("Scale: --");
+  canvas->drawRightString(scaleStatus, data.displayWidth - 4, data.displayHeight - 18);
+
+  if (data.debugMode) {
+    canvas->setTextColor(THEME_LIGHTTEXT, THEME_DARKBG);
+    canvas->setCursor(10, graphStartY + 10);
+    canvas->printf("Scale: %s", data.scaleConnected ? data.scaleName.c_str() : "none");
+    canvas->setCursor(10, graphStartY + 30);
+    canvas->printf("Nearby: %s", data.nearbyScales.c_str());
+  }
 
   canvas->pushSprite(0, 0);
   Serial.println("Draw: Pushed sprite");

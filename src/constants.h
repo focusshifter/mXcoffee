@@ -60,8 +60,8 @@ struct DeviceState {
   bool isTimerRunning;
   void *pServer;
 
-  unsigned long shotWeight;     // in grams
-  unsigned long lastShotWeight;  // Previous weight for flow rate calculation
+  float shotWeight;     // in grams
+  float lastShotWeight;  // Previous weight for flow rate calculation
   float flowRate;               // in grams/second
 };
 
@@ -81,6 +81,9 @@ struct UIData {
   int16_t displayHeight;
   int16_t maxPressure;
   bool deviceConnected;
-  unsigned long shotWeight;  // in grams
+  float shotWeight;  // in grams
   float flowRate;           // in grams/second
+  bool scaleConnected;
+  std::string scaleName;
+  std::string nearbyScales;
 };

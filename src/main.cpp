@@ -15,6 +15,7 @@
 #include "pressure_sensor/pressure_sensor.h"
 #include "ui/display_wrapper.h"
 #include "ui/ui.h"
+#include "ble_scale/ScaleManager.h"
 
 
 const int16_t PRESSURE_GRID_VALUES[] = {9, 6, 3, 0};
@@ -27,6 +28,7 @@ PressureSensor *pressureSensor = nullptr;
 BLEBattery *bleBattery = nullptr;
 OEPLog *bleLog = nullptr;
 OEPPressure *blePressure = nullptr;
+ScaleManager scaleManager;
 
 DeviceState defaultDeviceState = {
     .isAsleep = false,
@@ -42,8 +44,8 @@ DeviceState defaultDeviceState = {
     .shotTotalTime = 0,
     .isTimerRunning = false,
     .pServer = nullptr,
-    .shotWeight = 0,
-    .lastShotWeight = 0,
+    .shotWeight = 0.0f,
+    .lastShotWeight = 0.0f,
     .flowRate = 0.0f
 };
 
@@ -62,6 +64,35 @@ class MyServerCallbacks : public BLEServerCallbacks {
   }
 };
 
+bool bluetoothInitialized = false;
+
+void ensureBluetoothInit() {
+  if (!bluetoothInitialized) {
+    BLEDevice::init("PRS-mXcoffee");
+    bluetoothInitialized = true;
+  }
+}
+
+void resetBleState(bool releaseMemory) {
+  if (bleLog) {
+    delete bleLog;
+    bleLog = nullptr;
+  }
+  if (bleBattery) {
+    delete bleBattery;
+    bleBattery = nullptr;
+  }
+  if (blePressure) {
+    delete blePressure;
+    blePressure = nullptr;
+  }
+  deviceState.pServer = nullptr;
+  if (bluetoothInitialized) {
+    BLEDevice::deinit(releaseMemory);
+    bluetoothInitialized = false;
+  }
+}
+
 void setup() {
   auto cfg = M5.config();
   cfg.serial_baudrate = 115200;
@@ -78,6 +109,10 @@ void setup() {
 
   display.setColorDepth(24);
   display.setSwapBytes(false);
+
+  if (!displayWrapper) {
+    displayWrapper = new DisplayWrapper(display);
+  }
 
   Serial.begin(115200);
   Serial.println("Setup: M5 initialized");
@@ -117,13 +152,13 @@ void setup() {
 
 // BLE and other functions remain unchanged
 void initBle() {
+  ensureBluetoothInit();
   if (deviceState.pServer == nullptr) {
     Serial.println("Creating new pServer");
     bleLog = new OEPLog();
     bleBattery = new BLEBattery(100);
     blePressure = new OEPPressure();
 
-    BLEDevice::init("PRS-mXcoffee");
     BLEServer *pServer = BLEDevice::createServer();
     deviceState.pServer = pServer;
     pServer->setCallbacks(new MyServerCallbacks());
@@ -138,8 +173,10 @@ void initBle() {
 }
 
 void deinitBle() {
-  BLEAdvertising *pAdvertising = static_cast<BLEServer *>(deviceState.pServer)->getAdvertising();
-  pAdvertising->stop();
+  if (deviceState.pServer != nullptr) {
+    BLEAdvertising *pAdvertising = static_cast<BLEServer *>(deviceState.pServer)->getAdvertising();
+    pAdvertising->stop();
+  }
   deviceState.isBluetoothOn = false;
 }
 
@@ -215,29 +252,31 @@ void loop() {
     setTimer(currentPressure);
     sendToBle(currentPressure);
 
-    // Update weight (mock: 2g per second when pressure > 1000)
+    scaleManager.poll(millis());
     unsigned long currentTime = millis();
-    if (currentPressure > 1000) {
+    if (scaleManager.isScaleConnected()) {
+      float scaleWeight = scaleManager.getWeight();
       if (deviceState.lastWeightUpdateTime == 0) {
+        deviceState.shotWeight = scaleWeight;
+        deviceState.lastShotWeight = scaleWeight;
         deviceState.lastWeightUpdateTime = currentTime;
       } else {
-        // Calculate time delta in seconds
         float timeDelta = (currentTime - deviceState.lastWeightUpdateTime) / 1000.0f;
-        if (timeDelta >= 1.0f) {  // Only update weight every second
+        if (timeDelta >= 0.2f) {
           deviceState.lastShotWeight = deviceState.shotWeight;
-          deviceState.shotWeight += 2;  // Add 2g per second
-          
-          // Calculate flow rate (g/s)
-          if (deviceState.lastShotWeight > 0) {
+          deviceState.shotWeight = scaleWeight;
+          if (timeDelta > 0.0f) {
             float weightDelta = deviceState.shotWeight - deviceState.lastShotWeight;
             deviceState.flowRate = weightDelta / timeDelta;
           }
-          
           deviceState.lastWeightUpdateTime = currentTime;
         }
       }
     } else {
       deviceState.lastWeightUpdateTime = 0;
+      deviceState.flowRate = 0.0f;
+      deviceState.shotWeight = 0.0f;
+      deviceState.lastShotWeight = 0.0f;
     }
 
     UIData data = {
@@ -254,7 +293,10 @@ void loop() {
         .maxPressure = pressureSensor->getMaxPressure(),
         .deviceConnected = deviceState.deviceConnected,
         .shotWeight = deviceState.shotWeight,
-        .flowRate = deviceState.flowRate
+        .flowRate = deviceState.flowRate,
+        .scaleConnected = scaleManager.isScaleConnected(),
+        .scaleName = scaleManager.getScaleName(),
+        .nearbyScales = scaleManager.getNearbyScalesSummary()
     };
     std::copy(pressureValues, pressureValues + PRESSURE_VALUES_LEN, data.pressureValues);
     ui.draw(data);
@@ -269,13 +311,19 @@ void loop() {
     deviceState.isBluetoothOn = !deviceState.isBluetoothOn;
     if (deviceState.isBluetoothOn) {
       initBle();
+      scaleManager.setBluetoothEnabled(true);
       String btStatus = String("Bluetooth is ") + (deviceState.isBluetoothOn ? "on" : "off");
-      displayWrapper->drawCenterString(btStatus, displayWrapper->width() / 2, displayWrapper->height() / 2);
+      if (displayWrapper) {
+        displayWrapper->drawCenterString(btStatus, displayWrapper->width() / 2, displayWrapper->height() / 2);
+      }
       playBtOnSound();
     } else {
       deinitBle();
+      scaleManager.setBluetoothEnabled(false);
       String btStatus = String("Bluetooth is ") + (deviceState.isBluetoothOn ? "on" : "off");
-      displayWrapper->drawCenterString(btStatus, displayWrapper->width() / 2, displayWrapper->height() / 2);
+      if (displayWrapper) {
+        displayWrapper->drawCenterString(btStatus, displayWrapper->width() / 2, displayWrapper->height() / 2);
+      }
       playBtOffSound();
     }
     Serial.println("Loop: Bluetooth toggled");
@@ -284,6 +332,9 @@ void loop() {
     // Reset state
     deviceState = defaultDeviceState;
     std::fill(pressureValues, pressureValues + PRESSURE_VALUES_LEN, 0);
+    deinitBle();
+    scaleManager.setBluetoothEnabled(false);
+    resetBleState(false);
     Serial.println("Loop: State reset");
     delay(1000);
   }
