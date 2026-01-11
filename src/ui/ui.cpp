@@ -1,4 +1,7 @@
 #include "ui.h"
+#include <algorithm>
+#include <cstddef>
+#include <limits>
 #include <vector>
 #include <string>
 #include "utils/profiler.h"
@@ -97,14 +100,72 @@ void UI::draw(const UIData &data) {
   int graphColor = (data.lastPressure > 12000) ? THEME_GRAPH_BAD : (data.lastPressure > 9000) ? THEME_GRAPH_WARNING : THEME_GRAPH_GOOD;
   bool showPressureWarning = data.lastPressure > 12000;
   int16_t maxPressure = data.maxPressure - 10000;
-  for (int i = 1; i < PRESSURE_VALUES_LEN; i++) {
-    int16_t pressure1 = data.pressureValues[i - 1];
-    int16_t pressure2 = data.pressureValues[i];
-    int16_t pressureY1 = graphStartY + graphHeight - pressure1 * graphHeight / maxPressure;
-    int16_t pressureY2 = graphStartY + graphHeight - pressure2 * graphHeight / maxPressure;
-    int16_t pressureX1 = graphStartX + (i - 1) * graphWidth / PRESSURE_VALUES_LEN;
-    int16_t pressureX2 = graphStartX + i * graphWidth / PRESSURE_VALUES_LEN;
-    canvas->drawLine(pressureX1, pressureY1, pressureX2, pressureY2, graphColor);
+  const uint32_t pressureWindowMs = 30000;
+  const size_t pressurePointCount = PRESSURE_VALUES_LEN;
+
+  if (data.pressureHistoryCount > 1 && data.pressureHistory && data.pressureHistoryTimes) {
+    uint32_t lastTime = data.pressureHistoryTimes[data.pressureHistoryCount - 1];
+    uint32_t renderWindowMs = std::max(pressureWindowMs, lastTime);
+
+    std::vector<int16_t> bucketMin(pressurePointCount, std::numeric_limits<int16_t>::max());
+    std::vector<int16_t> bucketMax(pressurePointCount, std::numeric_limits<int16_t>::min());
+    std::vector<uint32_t> bucketMinTime(pressurePointCount, 0);
+    std::vector<uint32_t> bucketMaxTime(pressurePointCount, 0);
+    std::vector<uint16_t> bucketCounts(pressurePointCount, 0);
+
+    for (size_t i = 0; i < data.pressureHistoryCount; i++) {
+      uint32_t timeValue = data.pressureHistoryTimes[i];
+      size_t bucketIndex = std::min(
+          pressurePointCount - 1,
+          static_cast<size_t>((timeValue * pressurePointCount) / renderWindowMs));
+      int16_t pressureValue = data.pressureHistory[i];
+      if (pressureValue < bucketMin[bucketIndex]) {
+        bucketMin[bucketIndex] = pressureValue;
+        bucketMinTime[bucketIndex] = timeValue;
+      }
+      if (pressureValue > bucketMax[bucketIndex]) {
+        bucketMax[bucketIndex] = pressureValue;
+        bucketMaxTime[bucketIndex] = timeValue;
+      }
+      bucketCounts[bucketIndex]++;
+    }
+
+    size_t lastBucket = std::min(
+        pressurePointCount - 1,
+        static_cast<size_t>((lastTime * pressurePointCount) / renderWindowMs));
+
+    struct PressurePoint {
+      uint32_t timeMs;
+      int16_t value;
+    };
+    std::vector<PressurePoint> points;
+    points.reserve((lastBucket + 1) * 2);
+
+    for (size_t i = 0; i <= lastBucket; i++) {
+      if (bucketCounts[i] == 0) {
+        continue;
+      }
+      if (bucketMinTime[i] <= bucketMaxTime[i]) {
+        points.push_back({bucketMinTime[i], bucketMin[i]});
+        points.push_back({bucketMaxTime[i], bucketMax[i]});
+      } else {
+        points.push_back({bucketMaxTime[i], bucketMax[i]});
+        points.push_back({bucketMinTime[i], bucketMin[i]});
+      }
+    }
+
+    if (!points.empty()) {
+      int16_t previousX = graphStartX + (points.front().timeMs * graphWidth) / renderWindowMs;
+      int16_t previousY = graphStartY + graphHeight - points.front().value * graphHeight / maxPressure;
+
+      for (size_t i = 1; i < points.size(); i++) {
+        int16_t currentX = graphStartX + (points[i].timeMs * graphWidth) / renderWindowMs;
+        int16_t currentY = graphStartY + graphHeight - points[i].value * graphHeight / maxPressure;
+        canvas->drawLine(previousX, previousY, currentX, currentY, graphColor);
+        previousX = currentX;
+        previousY = currentY;
+      }
+    }
   }
 
   

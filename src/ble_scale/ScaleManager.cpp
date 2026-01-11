@@ -273,6 +273,10 @@ void ScaleManager::tryConnectLastKnown(uint32_t nowMs) {
   if (!m_hasLastKnown || m_activeScale) {
     return;
   }
+  const uint32_t staleMs = 15000;
+  if (nowMs - m_lastKnown.lastSeenMs > staleMs) {
+    return;
+  }
   if (nowMs - m_lastConnectAttemptMs < 5000) {
     return;
   }

@@ -6,6 +6,7 @@
 #include <M5Unified.h>
 #include <Wire.h>
 #include <string>
+#include <vector>
 #include <FS.h>
 #include <SPIFFS.h>
 #include "ble/BLEBattery.h"
@@ -41,17 +42,23 @@ DeviceState defaultDeviceState = {
     .lastWeightUpdateTime = 0,
     .lastPressure = -1,
     .timerStartTime = 0,
+    .shotStartTime = 0,
     .shotTotalTime = 0,
     .isTimerRunning = false,
     .pServer = nullptr,
     .shotWeight = 0.0f,
     .lastShotWeight = 0.0f,
-    .flowRate = 0.0f
+    .flowRate = 0.0f,
+    .lastScaleSampleTime = 0,
+    .flowCalcStartTime = 0,
+    .flowCalcStartWeight = 0.0f
 };
 
 DeviceState deviceState = defaultDeviceState;
 
 int16_t pressureValues[PRESSURE_VALUES_LEN];
+std::vector<int16_t> pressureHistory;
+std::vector<uint32_t> pressureHistoryTimes;
 
 #define VERSION "0.0.1"
 #define DEBUG
@@ -91,6 +98,11 @@ void resetBleState(bool releaseMemory) {
     BLEDevice::deinit(releaseMemory);
     bluetoothInitialized = false;
   }
+}
+
+void resetPressureHistory() {
+  pressureHistory.clear();
+  pressureHistoryTimes.clear();
 }
 
 void setup() {
@@ -138,6 +150,9 @@ void setup() {
   Serial.println("Setup: First pressure reading done");
 
   for (int i = 0; i < PRESSURE_VALUES_LEN; i++) pressureValues[i] = 0;
+  resetPressureHistory();
+  pressureHistory.reserve(6000);
+  pressureHistoryTimes.reserve(6000);
   Serial.println("Setup: Pressure values array initialized");
 
   Serial.print("PSRAM available: ");
@@ -217,6 +232,9 @@ void setTimer(int16_t pressure) {
     if (!deviceState.isTimerRunning) {
       deviceState.isTimerRunning = true;
       deviceState.timerStartTime = currentTime;
+      if (deviceState.shotStartTime == 0) {
+        deviceState.shotStartTime = currentTime;
+      }
     } else {
       updateShotTotalTime();
     }
@@ -252,35 +270,63 @@ void loop() {
     setTimer(currentPressure);
     sendToBle(currentPressure);
 
-    scaleManager.poll(millis());
     unsigned long currentTime = millis();
+    if (deviceState.shotStartTime == 0) {
+      deviceState.shotStartTime = currentTime;
+    }
+    pressureHistory.push_back(currentPressure);
+    pressureHistoryTimes.push_back(currentTime - deviceState.shotStartTime);
+
+    scaleManager.poll(currentTime);
     if (scaleManager.isScaleConnected()) {
       float scaleWeight = scaleManager.getWeight();
+      deviceState.lastScaleSampleTime = currentTime;
+
       if (deviceState.lastWeightUpdateTime == 0) {
         deviceState.shotWeight = scaleWeight;
         deviceState.lastShotWeight = scaleWeight;
         deviceState.lastWeightUpdateTime = currentTime;
+        deviceState.flowCalcStartTime = currentTime;
+        deviceState.flowCalcStartWeight = scaleWeight;
       } else {
         float timeDelta = (currentTime - deviceState.lastWeightUpdateTime) / 1000.0f;
         if (timeDelta >= 0.2f) {
           deviceState.lastShotWeight = deviceState.shotWeight;
           deviceState.shotWeight = scaleWeight;
-          if (timeDelta > 0.0f) {
-            float weightDelta = deviceState.shotWeight - deviceState.lastShotWeight;
-            deviceState.flowRate = weightDelta / timeDelta;
-          }
           deviceState.lastWeightUpdateTime = currentTime;
         }
+
+        unsigned long flowWindowMs = 1000;
+        if (currentTime - deviceState.flowCalcStartTime >= flowWindowMs) {
+          float flowDeltaSeconds =
+              (currentTime - deviceState.flowCalcStartTime) / 1000.0f;
+          float weightDelta = deviceState.shotWeight - deviceState.flowCalcStartWeight;
+          if (flowDeltaSeconds > 0.0f) {
+            deviceState.flowRate = weightDelta / flowDeltaSeconds;
+          }
+          deviceState.flowCalcStartTime = currentTime;
+          deviceState.flowCalcStartWeight = deviceState.shotWeight;
+        }
+      }
+
+      if (currentTime - deviceState.lastScaleSampleTime > 2000) {
+        deviceState.flowRate = 0.0f;
       }
     } else {
       deviceState.lastWeightUpdateTime = 0;
       deviceState.flowRate = 0.0f;
       deviceState.shotWeight = 0.0f;
       deviceState.lastShotWeight = 0.0f;
+      deviceState.lastScaleSampleTime = 0;
+      deviceState.flowCalcStartTime = 0;
+      deviceState.flowCalcStartWeight = 0.0f;
     }
 
     UIData data = {
         .pressureValues = {0},
+        .pressureHistory = pressureHistory.data(),
+        .pressureHistoryTimes = pressureHistoryTimes.data(),
+        .pressureHistoryCount = pressureHistory.size(),
         .lastPressure = currentPressure,
         .hexData = pressureSensor->getHexData(),
         .isBluetoothOn = deviceState.isBluetoothOn,
@@ -332,6 +378,7 @@ void loop() {
     // Reset state
     deviceState = defaultDeviceState;
     std::fill(pressureValues, pressureValues + PRESSURE_VALUES_LEN, 0);
+    resetPressureHistory();
     deinitBle();
     scaleManager.setBluetoothEnabled(false);
     resetBleState(false);

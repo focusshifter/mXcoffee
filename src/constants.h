@@ -3,6 +3,7 @@
 #include <M5GFX.h>  // for lgfx::rgb888_t and helpers
 
 #include <stdint.h>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -56,6 +57,7 @@ struct DeviceState {
   unsigned long lastWeightUpdateTime;  // For flow rate calculation
   int16_t lastPressure;
   unsigned long timerStartTime;
+  unsigned long shotStartTime;
   unsigned long shotTotalTime;
   bool isTimerRunning;
   void *pServer;
@@ -63,6 +65,9 @@ struct DeviceState {
   float shotWeight;     // in grams
   float lastShotWeight;  // Previous weight for flow rate calculation
   float flowRate;               // in grams/second
+  unsigned long lastScaleSampleTime;  // ms timestamp of last scale update
+  unsigned long flowCalcStartTime;    // ms timestamp for flow window
+  float flowCalcStartWeight;          // grams at flow window start
 };
 
 const int16_t PRESSURE_VALUES_LEN = 160;
@@ -70,6 +75,9 @@ const int16_t PRESSURE_VALUES_LEN = 160;
 // Data structure for UI rendering
 struct UIData {
   int16_t pressureValues[PRESSURE_VALUES_LEN];
+  const int16_t *pressureHistory;
+  const uint32_t *pressureHistoryTimes;
+  size_t pressureHistoryCount;
   int16_t lastPressure;
   std::string hexData;
   bool isBluetoothOn;
