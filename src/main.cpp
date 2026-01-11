@@ -58,6 +58,7 @@ DeviceState deviceState = defaultDeviceState;
 
 int16_t pressureValues[PRESSURE_VALUES_LEN];
 std::vector<int16_t> pressureHistory;
+std::vector<int16_t> weightHistory;
 std::vector<uint32_t> pressureHistoryTimes;
 
 #define VERSION "0.0.1"
@@ -102,6 +103,7 @@ void resetBleState(bool releaseMemory) {
 
 void resetPressureHistory() {
   pressureHistory.clear();
+  weightHistory.clear();
   pressureHistoryTimes.clear();
 }
 
@@ -152,6 +154,7 @@ void setup() {
   for (int i = 0; i < PRESSURE_VALUES_LEN; i++) pressureValues[i] = 0;
   resetPressureHistory();
   pressureHistory.reserve(6000);
+  weightHistory.reserve(6000);
   pressureHistoryTimes.reserve(6000);
   Serial.println("Setup: Pressure values array initialized");
 
@@ -275,6 +278,8 @@ void loop() {
       deviceState.shotStartTime = currentTime;
     }
     pressureHistory.push_back(currentPressure);
+    int16_t weightValue = static_cast<int16_t>(deviceState.shotWeight * 10.0f);
+    weightHistory.push_back(weightValue);
     pressureHistoryTimes.push_back(currentTime - deviceState.shotStartTime);
 
     scaleManager.poll(currentTime);
@@ -325,8 +330,10 @@ void loop() {
     UIData data = {
         .pressureValues = {0},
         .pressureHistory = pressureHistory.data(),
+        .weightHistory = weightHistory.data(),
         .pressureHistoryTimes = pressureHistoryTimes.data(),
         .pressureHistoryCount = pressureHistory.size(),
+        .weightHistoryCount = weightHistory.size(),
         .lastPressure = currentPressure,
         .hexData = pressureSensor->getHexData(),
         .isBluetoothOn = deviceState.isBluetoothOn,

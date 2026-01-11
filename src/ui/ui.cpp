@@ -103,8 +103,15 @@ void UI::draw(const UIData &data) {
   const uint32_t pressureWindowMs = 30000;
   const size_t pressurePointCount = PRESSURE_VALUES_LEN;
 
-  if (data.pressureHistoryCount > 1 && data.pressureHistory && data.pressureHistoryTimes) {
-    uint32_t lastTime = data.pressureHistoryTimes[data.pressureHistoryCount - 1];
+  auto drawCompressedGraph = [&](const int16_t *values,
+                                 size_t valueCount,
+                                 const uint32_t *times,
+                                 int16_t maxValue,
+                                 uint32_t color) {
+    if (valueCount < 2 || !values || !times || maxValue <= 0) {
+      return;
+    }
+    uint32_t lastTime = times[valueCount - 1];
     uint32_t renderWindowMs = std::max(pressureWindowMs, lastTime);
 
     std::vector<int16_t> bucketMin(pressurePointCount, std::numeric_limits<int16_t>::max());
@@ -113,18 +120,18 @@ void UI::draw(const UIData &data) {
     std::vector<uint32_t> bucketMaxTime(pressurePointCount, 0);
     std::vector<uint16_t> bucketCounts(pressurePointCount, 0);
 
-    for (size_t i = 0; i < data.pressureHistoryCount; i++) {
-      uint32_t timeValue = data.pressureHistoryTimes[i];
+    for (size_t i = 0; i < valueCount; i++) {
+      uint32_t timeValue = times[i];
       size_t bucketIndex = std::min(
           pressurePointCount - 1,
           static_cast<size_t>((timeValue * pressurePointCount) / renderWindowMs));
-      int16_t pressureValue = data.pressureHistory[i];
-      if (pressureValue < bucketMin[bucketIndex]) {
-        bucketMin[bucketIndex] = pressureValue;
+      int16_t sampleValue = values[i];
+      if (sampleValue < bucketMin[bucketIndex]) {
+        bucketMin[bucketIndex] = sampleValue;
         bucketMinTime[bucketIndex] = timeValue;
       }
-      if (pressureValue > bucketMax[bucketIndex]) {
-        bucketMax[bucketIndex] = pressureValue;
+      if (sampleValue > bucketMax[bucketIndex]) {
+        bucketMax[bucketIndex] = sampleValue;
         bucketMaxTime[bucketIndex] = timeValue;
       }
       bucketCounts[bucketIndex]++;
@@ -134,15 +141,17 @@ void UI::draw(const UIData &data) {
         pressurePointCount - 1,
         static_cast<size_t>((lastTime * pressurePointCount) / renderWindowMs));
 
-    struct PressurePoint {
+    struct GraphPoint {
       uint32_t timeMs;
       int16_t value;
     };
-    std::vector<PressurePoint> points;
+    std::vector<GraphPoint> points;
     points.reserve((lastBucket + 1) * 2);
 
     for (size_t i = 0; i <= lastBucket; i++) {
+      uint32_t bucketTime = (renderWindowMs * i) / (pressurePointCount - 1);
       if (bucketCounts[i] == 0) {
+        points.push_back({bucketTime, 0});
         continue;
       }
       if (bucketMinTime[i] <= bucketMaxTime[i]) {
@@ -154,19 +163,34 @@ void UI::draw(const UIData &data) {
       }
     }
 
-    if (!points.empty()) {
-      int16_t previousX = graphStartX + (points.front().timeMs * graphWidth) / renderWindowMs;
-      int16_t previousY = graphStartY + graphHeight - points.front().value * graphHeight / maxPressure;
-
-      for (size_t i = 1; i < points.size(); i++) {
-        int16_t currentX = graphStartX + (points[i].timeMs * graphWidth) / renderWindowMs;
-        int16_t currentY = graphStartY + graphHeight - points[i].value * graphHeight / maxPressure;
-        canvas->drawLine(previousX, previousY, currentX, currentY, graphColor);
-        previousX = currentX;
-        previousY = currentY;
-      }
+    if (points.empty()) {
+      return;
     }
-  }
+
+    int16_t previousX = graphStartX + (points.front().timeMs * graphWidth) / renderWindowMs;
+    int16_t previousY = graphStartY + graphHeight - points.front().value * graphHeight / maxValue;
+
+    for (size_t i = 1; i < points.size(); i++) {
+      int16_t currentX = graphStartX + (points[i].timeMs * graphWidth) / renderWindowMs;
+      int16_t currentY = graphStartY + graphHeight - points[i].value * graphHeight / maxValue;
+      canvas->drawLine(previousX, previousY, currentX, currentY, color);
+      previousX = currentX;
+      previousY = currentY;
+    }
+  };
+
+  drawCompressedGraph(data.pressureHistory,
+                      data.pressureHistoryCount,
+                      data.pressureHistoryTimes,
+                      maxPressure,
+                      graphColor);
+
+  const int16_t maxWeightValue = 500;
+  drawCompressedGraph(data.weightHistory,
+                      data.weightHistoryCount,
+                      data.pressureHistoryTimes,
+                      maxWeightValue,
+                      THEME_GRAPH_WARNING);
 
   
 

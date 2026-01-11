@@ -67,4 +67,10 @@ private:
   ScaleCandidate m_lastKnown;
   uint32_t m_lastConnectAttemptMs = 0;
   bool m_pendingConnect = false;
+
+#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
+  float m_simulatedWeight = 0.0f;
+  uint32_t m_simulatedStartMs = 0;
+  uint32_t m_simulatedLastMs = 0;
+#endif
 };

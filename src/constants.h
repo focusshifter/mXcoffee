@@ -76,8 +76,10 @@ const int16_t PRESSURE_VALUES_LEN = 160;
 struct UIData {
   int16_t pressureValues[PRESSURE_VALUES_LEN];
   const int16_t *pressureHistory;
+  const int16_t *weightHistory;
   const uint32_t *pressureHistoryTimes;
   size_t pressureHistoryCount;
+  size_t weightHistoryCount;
   int16_t lastPressure;
   std::string hexData;
   bool isBluetoothOn;

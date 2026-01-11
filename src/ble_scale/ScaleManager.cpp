@@ -1,6 +1,7 @@
 #include "ScaleManager.h"
 #include <Arduino.h>
 #include <algorithm>
+#include <cmath>
 
 ScaleManager *ScaleManager::s_instance = nullptr;
 
@@ -47,12 +48,38 @@ void ScaleManager::setBluetoothEnabled(bool enabled) {
     m_hasLastKnown = false;
     m_lastConnectAttemptMs = 0;
     m_pendingConnect = false;
+#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
+    m_simulatedWeight = 0.0f;
+    m_simulatedStartMs = 0;
+    m_simulatedLastMs = 0;
+#endif
   } else {
     begin();
   }
 }
 
 void ScaleManager::poll(uint32_t nowMs) {
+#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
+  if (m_simulatedStartMs == 0) {
+    m_simulatedStartMs = nowMs;
+    m_simulatedLastMs = nowMs;
+  }
+  const float cycleSeconds = 10.0f;
+  const float activeSeconds = 6.0f;
+  const float maxFlowRate = 12.0f;
+  float elapsedSeconds = (nowMs - m_simulatedStartMs) / 1000.0f;
+  float cycleTime = fmodf(elapsedSeconds, cycleSeconds);
+  float wave = 0.0f;
+  if (cycleTime < activeSeconds) {
+    wave = (1.0f - cosf(cycleTime * 3.14159265f / activeSeconds)) * 0.5f;
+  }
+  float flowRate = wave * maxFlowRate;
+  float deltaSeconds = (nowMs - m_simulatedLastMs) / 1000.0f;
+  m_simulatedWeight += flowRate * deltaSeconds;
+  m_simulatedLastMs = nowMs;
+  return;
+#endif
+
   if (!m_btEnabled) {
     return;
   }
@@ -87,24 +114,39 @@ void ScaleManager::poll(uint32_t nowMs) {
 bool ScaleManager::isBluetoothEnabled() const { return m_btEnabled; }
 
 bool ScaleManager::isScaleConnected() const {
+#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
+  return true;
+#else
   return m_activeScale && m_activeScale->isConnected();
+#endif
 }
 
 float ScaleManager::getWeight() const {
+#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
+  return m_simulatedWeight;
+#else
   if (!m_activeScale) {
     return 0.0f;
   }
   return m_activeScale->getWeight();
+#endif
 }
 
 const char *ScaleManager::getScaleName() const {
+#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
+  return "SimScale";
+#else
   if (!m_activeScale) {
     return "";
   }
   return m_activeScale->getName();
+#endif
 }
 
 std::string ScaleManager::getNearbyScalesSummary() const {
+#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
+  return "simulated";
+#else
   if (!m_btEnabled) {
     return "bt off";
   }
@@ -130,6 +172,7 @@ std::string ScaleManager::getNearbyScalesSummary() const {
     summary += " ...";
   }
   return summary;
+#endif
 }
 
 void ScaleManager::onResult(BLEAdvertisedDevice advertisedDevice) {
