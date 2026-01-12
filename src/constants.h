@@ -55,7 +55,10 @@ struct DeviceState {
   unsigned long lastRefreshTime;
   unsigned long lastActivityTime;
   unsigned long lastWeightUpdateTime;  // For flow rate calculation
+  unsigned long lastGraphChangeTime;
   int16_t lastPressure;
+  int16_t lastGraphPressure;
+  float lastGraphWeight;
   unsigned long timerStartTime;
   unsigned long shotStartTime;
   unsigned long shotTotalTime;

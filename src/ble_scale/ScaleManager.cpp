@@ -35,7 +35,7 @@ void ScaleManager::begin() {
 }
 
 void ScaleManager::setBluetoothEnabled(bool enabled) {
-  if (m_btEnabled == enabled) {
+  if (m_btEnabled == enabled && enabled) {
     return;
   }
   m_btEnabled = enabled;
@@ -48,11 +48,6 @@ void ScaleManager::setBluetoothEnabled(bool enabled) {
     m_hasLastKnown = false;
     m_lastConnectAttemptMs = 0;
     m_pendingConnect = false;
-#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
-    m_simulatedWeight = 0.0f;
-    m_simulatedStartMs = 0;
-    m_simulatedLastMs = 0;
-#endif
   } else {
     begin();
   }
@@ -64,19 +59,69 @@ void ScaleManager::poll(uint32_t nowMs) {
     m_simulatedStartMs = nowMs;
     m_simulatedLastMs = nowMs;
   }
+
+  float elapsedSeconds = (nowMs - m_simulatedStartMs) / 1000.0f;
+  float flowRate = 0.0f;
+
+#if defined(SHOT_WEIGHT_SIMULATED_SHOT) && SHOT_WEIGHT_SIMULATED_SHOT
+  const float preinfusionSeconds = 6.0f;
+  const float preinfusionRampSeconds = 0.5f;
+  const float preinfusionTarget = 2.0f;
+  const float rampUpSeconds = 1.0f;
+  const float taperSeconds = 25.0f;
+  const float rampDownSeconds = 1.0f;
+  const float preinfusionFlow = preinfusionTarget / preinfusionSeconds;
+  const float flowScale = 0.1995f;
+  const float preinfusionBar = 2.0f;
+  const float peakBar = 9.0f;
+  const float endBar = 6.0f;
+
+  if (elapsedSeconds < preinfusionSeconds) {
+    if (elapsedSeconds < preinfusionRampSeconds) {
+      float progress = elapsedSeconds / preinfusionRampSeconds;
+      float eased = progress * progress;
+      flowRate = preinfusionFlow * eased;
+    } else {
+      flowRate = preinfusionFlow;
+    }
+  } else {
+    float t = elapsedSeconds - preinfusionSeconds;
+    if (t < rampUpSeconds) {
+      float progress = t / rampUpSeconds;
+      float eased = progress * progress;
+      float pressureBar = preinfusionBar + (peakBar - preinfusionBar) * eased;
+      flowRate = pressureBar * flowScale;
+    } else if (t < rampUpSeconds + taperSeconds) {
+      float progress = (t - rampUpSeconds) / taperSeconds;
+      float pressureBar = peakBar + (endBar - peakBar) * progress;
+      flowRate = pressureBar * flowScale;
+    } else if (t < rampUpSeconds + taperSeconds + rampDownSeconds) {
+      float progress = (t - rampUpSeconds - taperSeconds) / rampDownSeconds;
+      float eased = 1.0f - (1.0f - progress) * (1.0f - progress);
+      float pressureBar = endBar + (0.0f - endBar) * eased;
+      flowRate = pressureBar * flowScale;
+    } else {
+      flowRate = 0.0f;
+    }
+  }
+#else
   const float cycleSeconds = 10.0f;
   const float activeSeconds = 6.0f;
   const float maxFlowRate = 12.0f;
-  float elapsedSeconds = (nowMs - m_simulatedStartMs) / 1000.0f;
   float cycleTime = fmodf(elapsedSeconds, cycleSeconds);
   float wave = 0.0f;
   if (cycleTime < activeSeconds) {
     wave = (1.0f - cosf(cycleTime * 3.14159265f / activeSeconds)) * 0.5f;
   }
-  float flowRate = wave * maxFlowRate;
+  flowRate = wave * maxFlowRate;
+#endif
+
   float deltaSeconds = (nowMs - m_simulatedLastMs) / 1000.0f;
   m_simulatedWeight += flowRate * deltaSeconds;
   m_simulatedLastMs = nowMs;
+  if (m_simulatedWeight > 40.0f) {
+    m_simulatedWeight = 40.0f;
+  }
   return;
 #endif
 
@@ -109,6 +154,14 @@ void ScaleManager::poll(uint32_t nowMs) {
   if (!m_scanning && !m_activeScale && m_candidateCount == 0) {
     tryConnectLastKnown(nowMs);
   }
+}
+
+void ScaleManager::reset() {
+#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
+  m_simulatedWeight = 0.0f;
+  m_simulatedStartMs = 0;
+  m_simulatedLastMs = 0;
+#endif
 }
 
 bool ScaleManager::isBluetoothEnabled() const { return m_btEnabled; }

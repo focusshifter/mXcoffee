@@ -11,11 +11,43 @@ PressureSensor::PressureSensor(m5::I2C_Class *i2c_wire) {
 
 int16_t PressureSensor::getPressure() {
 #if defined(PRESSURE_SENSOR_SIMULATED) && PRESSURE_SENSOR_SIMULATED
-  static uint32_t startTime = 0;
-  if (startTime == 0) {
-    startTime = millis();
+  if (simulatedStartMs == 0) {
+    simulatedStartMs = millis();
   }
-  float elapsedSeconds = (millis() - startTime) / 1000.0f;
+  float elapsedSeconds = (millis() - simulatedStartMs) / 1000.0f;
+  float fpressure = 0.0f;
+
+#if defined(PRESSURE_SENSOR_SIMULATED_SHOT) && PRESSURE_SENSOR_SIMULATED_SHOT
+  const float preinfusionSeconds = 5.0f;
+  const float preinfusionRampSeconds = 0.5f;
+  const float rampUpSeconds = 1.0f;
+  const float taperSeconds = 25.0f;
+  const float rampDownSeconds = 1.0f;
+  const float preinfusionBar = 2.0f;
+  const float peakBar = 9.0f;
+  const float endBar = 6.0f;
+  float t = elapsedSeconds;
+  if (t < preinfusionRampSeconds) {
+    float progress = t / preinfusionRampSeconds;
+    float eased = progress * progress;
+    fpressure = preinfusionBar * eased;
+  } else if (t < preinfusionSeconds) {
+    fpressure = preinfusionBar;
+  } else if (t < preinfusionSeconds + rampUpSeconds) {
+    float progress = (t - preinfusionSeconds) / rampUpSeconds;
+    float eased = progress * progress;
+    fpressure = preinfusionBar + (peakBar - preinfusionBar) * eased;
+  } else if (t < preinfusionSeconds + rampUpSeconds + taperSeconds) {
+    float progress = (t - preinfusionSeconds - rampUpSeconds) / taperSeconds;
+    fpressure = peakBar + (endBar - peakBar) * progress;
+  } else if (t < preinfusionSeconds + rampUpSeconds + taperSeconds + rampDownSeconds) {
+    float progress = (t - preinfusionSeconds - rampUpSeconds - taperSeconds) / rampDownSeconds;
+    float eased = 1.0f - (1.0f - progress) * (1.0f - progress);
+    fpressure = endBar + (0.0f - endBar) * eased;
+  } else {
+    fpressure = 0.0f;
+  }
+#else
   const float waveCycleSeconds = 10.0f;
   const float activeWaveSeconds = 6.0f;
   const float maxPressureBar = 9.0f;
@@ -24,7 +56,9 @@ int16_t PressureSensor::getPressure() {
   if (cycleTime < activeWaveSeconds) {
     wave = (1.0f - cosf(cycleTime * 2.0f * 3.14159265f / activeWaveSeconds)) * 0.5f;
   }
-  float fpressure = wave * maxPressureBar;
+  fpressure = wave * maxPressureBar;
+#endif
+
   pressure = int16_t(fpressure * 1000); // Convert to mbar
   hex_data = "SIM SIM SIM";
 #else
@@ -65,6 +99,12 @@ int16_t PressureSensor::getPressure() {
 #endif
 
   return pressure;
+}
+
+void PressureSensor::resetSimulation() {
+#if defined(PRESSURE_SENSOR_SIMULATED) && PRESSURE_SENSOR_SIMULATED
+  simulatedStartMs = 0;
+#endif
 }
 
 std::string PressureSensor::getHexData() { return hex_data; }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath> // For M_PI, sin, round
+#include <stdint.h>
 #include <string>
 
 #ifndef SIMULATOR_OR_DEBUG
@@ -29,10 +30,16 @@ private:
   float getRealPressure();
 #endif
 
+public:
+  void resetSimulation();
+
 private:
   std::string hex_data;
 #ifndef SIMULATOR_OR_DEBUG
   m5::I2C_Class *wire;
+#endif
+#if defined(PRESSURE_SENSOR_SIMULATED) && PRESSURE_SENSOR_SIMULATED
+  uint32_t simulatedStartMs = 0;
 #endif
   int16_t pressure;
 };

@@ -17,6 +17,7 @@ public:
   void begin();
   void setBluetoothEnabled(bool enabled);
   void poll(uint32_t nowMs);
+  void reset();
 
   bool isBluetoothEnabled() const;
   bool isScaleConnected() const;

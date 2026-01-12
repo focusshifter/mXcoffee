@@ -5,6 +5,7 @@
 #include <BLEUtils.h>
 #include <M5Unified.h>
 #include <Wire.h>
+#include <cmath>
 #include <string>
 #include <vector>
 #include <FS.h>
@@ -40,7 +41,10 @@ DeviceState defaultDeviceState = {
     .lastRefreshTime = 0,
     .lastActivityTime = 0,
     .lastWeightUpdateTime = 0,
+    .lastGraphChangeTime = 0,
     .lastPressure = -1,
+    .lastGraphPressure = -1,
+    .lastGraphWeight = 0.0f,
     .timerStartTime = 0,
     .shotStartTime = 0,
     .shotTotalTime = 0,
@@ -274,13 +278,6 @@ void loop() {
     sendToBle(currentPressure);
 
     unsigned long currentTime = millis();
-    if (deviceState.shotStartTime == 0) {
-      deviceState.shotStartTime = currentTime;
-    }
-    pressureHistory.push_back(currentPressure);
-    int16_t weightValue = static_cast<int16_t>(deviceState.shotWeight * 10.0f);
-    weightHistory.push_back(weightValue);
-    pressureHistoryTimes.push_back(currentTime - deviceState.shotStartTime);
 
     scaleManager.poll(currentTime);
     if (scaleManager.isScaleConnected()) {
@@ -325,6 +322,29 @@ void loop() {
       deviceState.lastScaleSampleTime = 0;
       deviceState.flowCalcStartTime = 0;
       deviceState.flowCalcStartWeight = 0.0f;
+    }
+
+    float currentWeight = deviceState.shotWeight;
+    if (deviceState.lastGraphChangeTime == 0) {
+      deviceState.lastGraphChangeTime = currentTime;
+      deviceState.lastGraphPressure = currentPressure;
+      deviceState.lastGraphWeight = currentWeight;
+    } else if (currentPressure != deviceState.lastGraphPressure ||
+               fabsf(currentWeight - deviceState.lastGraphWeight) > 0.01f) {
+      deviceState.lastGraphChangeTime = currentTime;
+      deviceState.lastGraphPressure = currentPressure;
+      deviceState.lastGraphWeight = currentWeight;
+    }
+
+    if (deviceState.shotStartTime == 0) {
+      deviceState.shotStartTime = currentTime;
+    }
+
+    if (currentTime - deviceState.lastGraphChangeTime < 1000) {
+      pressureHistory.push_back(currentPressure);
+      int16_t weightValue = static_cast<int16_t>(currentWeight * 10.0f);
+      weightHistory.push_back(weightValue);
+      pressureHistoryTimes.push_back(currentTime - deviceState.shotStartTime);
     }
 
     UIData data = {
@@ -386,6 +406,10 @@ void loop() {
     deviceState = defaultDeviceState;
     std::fill(pressureValues, pressureValues + PRESSURE_VALUES_LEN, 0);
     resetPressureHistory();
+    scaleManager.reset();
+    if (pressureSensor) {
+      pressureSensor->resetSimulation();
+    }
     deinitBle();
     scaleManager.setBluetoothEnabled(false);
     resetBleState(false);
