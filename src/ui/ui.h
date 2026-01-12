@@ -11,5 +11,6 @@ private:
 public:
   UI(M5GFX *display);
   ~UI();
+  void drawSplash();
   void draw(const UIData &data);
 };

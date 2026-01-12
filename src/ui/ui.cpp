@@ -9,8 +9,10 @@
 
 #include <Arduino.h>
 #include <M5GFX.h>
+#include <cmath>
 
 #include "fonts/MoonGloss_16.h"
+#include "fonts/MoonGloss_24.h"
 #include "fonts/MoonGloss_48.h"
 
 const int16_t PRESSURE_GRID_VALUES[] = {9, 6, 3, 0};
@@ -37,6 +39,75 @@ UI::~UI() {
       canvas->deleteSprite();
       delete canvas;
   }
+}
+
+void UI::drawSplash() {
+  if (!display || !canvas) {
+    return;
+  }
+  if (canvas->width() == 0 || canvas->height() == 0) {
+    canvas->setPsram(true);
+    canvas->setColorDepth(24);
+    canvas->setSwapBytes(false);
+    canvas->createSprite(display->width(), display->height());
+  }
+
+  canvas->fillSprite(TFT_BLACK);
+  canvas->loadFont(MoonGloss_24);
+  canvas->setTextSize(1);
+  canvas->setTextColor(THEME_LIGHTTEXT);
+
+  int16_t fontHeight = canvas->fontHeight();
+  int16_t xSize = static_cast<int16_t>(fontHeight * 1.1f);
+  int16_t textWidthM = canvas->textWidth("m");
+  int16_t textWidthCoffee = canvas->textWidth("coffee");
+  int16_t totalWidth = textWidthM + xSize + textWidthCoffee;
+  int16_t textY = (canvas->height() - fontHeight) / 2;
+  int16_t startX = (canvas->width() - totalWidth) / 2;
+  int16_t xCenter = startX + textWidthM + xSize / 2;
+  int16_t coffeeX = startX + textWidthM + xSize;
+  int16_t xY = textY + fontHeight / 2;
+  const int16_t logoOffsetX = -1;
+  const int16_t logoOffsetY = 2;
+  xCenter += logoOffsetX;
+  xY += logoOffsetY;
+  int16_t radius = static_cast<int16_t>(xSize * 0.55f);
+
+  canvas->drawString("m", startX, textY);
+  canvas->drawString("coffee", coffeeX, textY);
+  canvas->fillCircle(xCenter, xY, radius, lgfx::color888(0x5A, 0x3A, 0x1A));
+
+  float length = radius * 0.6f;
+  float curveAmp = radius * 0.45f;
+  const int segments = 20;
+  const float invSqrt2 = 0.70710678f;
+
+  auto drawLatteStroke = [&](float baseX, float baseY, float perpX, float perpY) {
+    for (int i = 0; i < segments; i++) {
+      float t1 = -1.0f + 2.0f * (static_cast<float>(i) / segments);
+      float t2 = -1.0f + 2.0f * (static_cast<float>(i + 1) / segments);
+      float offset1 = sinf(t1 * 3.14159265f) * curveAmp;
+      float offset2 = sinf(t2 * 3.14159265f) * curveAmp;
+      float ax = t1 * length + offset1 * perpX;
+      float ay = t1 * length + offset1 * perpY;
+      float bx = t2 * length + offset2 * perpX;
+      float by = t2 * length + offset2 * perpY;
+      int16_t x1 = xCenter + static_cast<int16_t>(baseX * ax - baseY * ay);
+      int16_t y1 = xY + static_cast<int16_t>(baseY * ax + baseX * ay);
+      int16_t x2 = xCenter + static_cast<int16_t>(baseX * bx - baseY * by);
+      int16_t y2 = xY + static_cast<int16_t>(baseY * bx + baseX * by);
+      canvas->drawLine(x1, y1, x2, y2, lgfx::color888(0xF4, 0xE5, 0xC3));
+      canvas->drawLine(x1 + 1, y1, x2 + 1, y2, lgfx::color888(0xF4, 0xE5, 0xC3));
+    }
+  };
+
+  drawLatteStroke(invSqrt2, invSqrt2, -invSqrt2, invSqrt2);
+  drawLatteStroke(invSqrt2, -invSqrt2, invSqrt2, invSqrt2);
+
+  canvas->setTextSize(1);
+  canvas->unloadFont();
+  canvas->pushSprite(0, 0);
+  delay(1000);
 }
 
 void UI::draw(const UIData &data) {

@@ -135,11 +135,7 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Setup: M5 initialized");
 
-  display.fillScreen(THEME_DARKBG);
-
-  String build = String("m5stack version ") + VERSION + " " + __DATE__ + " " + __TIME__ + " :)";
-  display.drawString(build, 10, 10);
-  display.drawCenterString("Ready to brew!", display.width() / 2, display.height() / 2);
+  ui.drawSplash();
   Serial.println("Setup: Display initialized");
 
   M5.Power.setExtOutput(true);
