@@ -1,22 +1,10 @@
 #include "ScaleManager.h"
+#include "ScaleRegistry.h"
 #include <Arduino.h>
 #include <algorithm>
 #include <cmath>
 
 ScaleManager *ScaleManager::s_instance = nullptr;
-
-namespace {
-struct ScaleFactory {
-  bool (*matches)(BLEAdvertisedDevice &device);
-  ScaleDevice *(*create)(const BLEAddress &address, esp_ble_addr_type_t addrType, const std::string &name,
-                         BLEClient *client);
-  ScaleManager::ScaleType type;
-};
-
-constexpr ScaleFactory kFactories[] = {
-    {LfSmartScaleDevice::matches, LfSmartScaleDevice::create, ScaleManager::ScaleType::LfSmartScale},
-};
-} // namespace
 
 ScaleManager::ScaleManager() {
   if (!s_instance) {
@@ -273,11 +261,9 @@ std::string ScaleManager::getNearbyScalesSummary() const {
 
 void ScaleManager::onResult(BLEAdvertisedDevice advertisedDevice) {
   uint32_t nowMs = millis();
-  for (const auto &factory : kFactories) {
-    if (factory.matches(advertisedDevice)) {
-      recordCandidate(advertisedDevice, factory.type, nowMs);
-      break;
-    }
+  const mxcoffee::scale::ScaleDriver *driver = mxcoffee::scale::matchScaleDriver(advertisedDevice);
+  if (driver) {
+    recordCandidate(advertisedDevice, driver->type, nowMs);
   }
 }
 
@@ -385,13 +371,12 @@ void ScaleManager::tryConnectCandidate() {
 
   BLEClient *client = BLEDevice::createClient();
   ScaleDevice *scale = nullptr;
+  const mxcoffee::scale::ScaleDriver *driver =
+      mxcoffee::scale::findScaleDriver(m_candidates[bestIndex].type);
 
-  for (const auto &factory : kFactories) {
-    if (factory.type == m_candidates[bestIndex].type) {
-      scale = factory.create(m_candidates[bestIndex].address, m_candidates[bestIndex].addressType,
-                             m_candidates[bestIndex].name, client);
-      break;
-    }
+  if (driver) {
+    scale = driver->create(m_candidates[bestIndex].address, m_candidates[bestIndex].addressType,
+                           m_candidates[bestIndex].name, client);
   }
 
   if (!scale) {
@@ -430,12 +415,10 @@ void ScaleManager::tryConnectLastKnown(uint32_t nowMs) {
 
   BLEClient *client = BLEDevice::createClient();
   ScaleDevice *scale = nullptr;
+  const mxcoffee::scale::ScaleDriver *driver = mxcoffee::scale::findScaleDriver(m_lastKnown.type);
 
-  for (const auto &factory : kFactories) {
-    if (factory.type == m_lastKnown.type) {
-      scale = factory.create(m_lastKnown.address, m_lastKnown.addressType, m_lastKnown.name, client);
-      break;
-    }
+  if (driver) {
+    scale = driver->create(m_lastKnown.address, m_lastKnown.addressType, m_lastKnown.name, client);
   }
 
   if (!scale) {

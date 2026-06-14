@@ -296,21 +296,21 @@ void UI::draw(const UIData &data) {
   // Pressure panel
   canvas->fillRect(220, 0, 100, 80, THEME_PANEL_OUTER_BG);
   canvas->fillRect(222, 18, 96, 60, THEME_PANEL_INNER_BG);
-  canvas->setTextColor(THEME_PANEL_HEADER_TEXT, THEME_PANEL_OUTER_BG);
+  canvas->setTextColor(THEME_PANEL_HEADER_TEXT);
   canvas->drawString("PRESSURE", 222, 2);
 
   // Shot timer panel
   canvas->fillRect(0, 0, 100, 80, THEME_PANEL_OUTER_BG);
   canvas->fillRect(2, 18, 96, 60, THEME_PANEL_INNER_BG);
-  canvas->setTextColor(THEME_PANEL_HEADER_TEXT, THEME_PANEL_OUTER_BG);
+  canvas->setTextColor(THEME_PANEL_HEADER_TEXT);
   canvas->drawString("SHOT TIME", 2, 2);
 
   canvas->fillRect(110, 0, 100, 80, THEME_PANEL_OUTER_BG);
   canvas->fillRect(112, 18, 96, 60, THEME_PANEL_INNER_BG);
-  canvas->setTextColor(THEME_PANEL_HEADER_TEXT, THEME_PANEL_OUTER_BG);
+  canvas->setTextColor(THEME_PANEL_HEADER_TEXT);
   canvas->drawString("WEIGHT G", 112, 2);
 
-  canvas->setTextColor(THEME_PANEL_TEXT, THEME_PANEL_INNER_BG);
+  canvas->setTextColor(THEME_PANEL_TEXT);
 
   canvas->loadFont(MoonGloss_16);
   String weightStr = String(data.shotWeight, 1) + "g";

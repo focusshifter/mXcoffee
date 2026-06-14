@@ -1,6 +1,7 @@
 #pragma once
 
-#include "LfSmartScale.h"
+#include "ScaleDevice.h"
+#include "ScaleTypes.h"
 #include <BLEDevice.h>
 #include <BLEScan.h>
 #include <string>
@@ -9,10 +10,7 @@ class ScaleManager : public BLEAdvertisedDeviceCallbacks {
 public:
   ScaleManager();
 
-  enum class ScaleType {
-    Unknown = 0,
-    LfSmartScale
-  };
+  using ScaleType = mxcoffee::scale::ScaleType;
 
   struct SavedScale {
     std::string address;

@@ -1,4 +1,5 @@
 #include "LfSmartScale.h"
+#include "LfSmartScaleProtocol.h"
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLERemoteCharacteristic.h>
@@ -118,15 +119,10 @@ void LfSmartScaleDevice::notifyCallback(BLERemoteCharacteristic *, uint8_t *data
 }
 
 void LfSmartScaleDevice::handleNotify(const uint8_t *data, size_t length) {
-  if (length < 6) {
-    return;
+  float weight = 0.0f;
+  if (mxcoffee::scale::decodeLfSmartScaleWeight(data, length, weight)) {
+    m_weight = weight;
   }
-  int16_t raw = static_cast<int16_t>((data[4] << 8) | data[3]);
-  float weight = static_cast<float>(raw) / 10.0f;
-  if (data[5] > 0) {
-    weight *= -1.0f;
-  }
-  m_weight = weight;
 }
 
 void LfSmartScaleDevice::handleDisconnect() {
