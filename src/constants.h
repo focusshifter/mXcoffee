@@ -65,12 +65,14 @@ struct DeviceState {
   bool isTimerRunning;
   void *pServer;
 
-  float shotWeight;     // in grams
-  float lastShotWeight;  // Previous weight for flow rate calculation
-  float flowRate;               // in grams/second
-  unsigned long lastScaleSampleTime;  // ms timestamp of last scale update
-  unsigned long flowCalcStartTime;    // ms timestamp for flow window
-  float flowCalcStartWeight;          // grams at flow window start
+  float shotWeight;
+  float lastShotWeight;
+  float flowRate;
+  unsigned long lastScaleSampleTime;
+  unsigned long flowCalcStartTime;
+  float flowCalcStartWeight;
+  unsigned long screenshotBtnPressTime;
+  bool screenshotPending;
 };
 
 const int16_t PRESSURE_VALUES_LEN = 160;

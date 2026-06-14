@@ -9,6 +9,8 @@
 
 #include <Arduino.h>
 #include <M5GFX.h>
+#include <FS.h>
+#include <SPIFFS.h>
 #include <cmath>
 
 #include "fonts/MoonGloss_16.h"
@@ -303,20 +305,20 @@ void UI::draw(const UIData &data) {
   canvas->setTextColor(THEME_PANEL_HEADER_TEXT, THEME_PANEL_OUTER_BG);
   canvas->drawString("SHOT TIME", 2, 2);
 
-  // Weight panel
-  canvas->fillRect(110, 0, 100, 80, THEME_PANEL_OUTER_BG);
-  canvas->fillRect(112, 18, 96, 60, THEME_PANEL_INNER_BG);
-  canvas->setTextColor(THEME_PANEL_HEADER_TEXT, THEME_PANEL_OUTER_BG);
-  canvas->drawString("WEIGHT G", 112, 2);
+  if (data.scaleConnected) {
+    canvas->fillRect(110, 0, 100, 80, THEME_PANEL_OUTER_BG);
+    canvas->fillRect(112, 18, 96, 60, THEME_PANEL_INNER_BG);
+    canvas->setTextColor(THEME_PANEL_HEADER_TEXT, THEME_PANEL_OUTER_BG);
+    canvas->drawString("WEIGHT G", 112, 2);
 
-  // Panel counters
-  canvas->setTextColor(THEME_PANEL_TEXT, THEME_PANEL_INNER_BG);
-  
-  canvas->loadFont(MoonGloss_16);
-  String weightStr = String(data.shotWeight, 1) + "g";
-  canvas->drawRightString(weightStr, 200, 30);
-  String flowStr = String(data.flowRate, 1) + " g/s";
-  canvas->drawRightString(flowStr, 200, 50);
+    canvas->setTextColor(THEME_PANEL_TEXT, THEME_PANEL_INNER_BG);
+
+    canvas->loadFont(MoonGloss_16);
+    String weightStr = String(data.shotWeight, 1) + "g";
+    canvas->drawRightString(weightStr, 200, 30);
+    String flowStr = String(data.flowRate, 1) + " g/s";
+    canvas->drawRightString(flowStr, 200, 50);
+  }
   
   canvas->loadFont(MoonGloss_48);
 
@@ -370,4 +372,98 @@ void UI::draw(const UIData &data) {
 
   canvas->pushSprite(0, 0);
   Serial.println("Draw: Pushed sprite");
+}
+
+bool UI::captureScreenshot(const char *filename) {
+  if (!canvas || canvas->width() == 0 || canvas->height() == 0) {
+    Serial.println("Screenshot: Canvas not initialized");
+    return false;
+  }
+
+  File file = SPIFFS.open(filename, "w");
+  if (!file) {
+    Serial.printf("Screenshot: Failed to open %s\n", filename);
+    return false;
+  }
+
+  int16_t width = canvas->width();
+  int16_t height = canvas->height();
+  uint8_t bitsPerPixel = 24;
+  uint32_t rowSize = ((width * bitsPerPixel + 31) / 32) * 4;
+  uint32_t imageSize = rowSize * height;
+  uint32_t fileSize = 54 + imageSize;
+  uint32_t dataOffset = 54;
+
+  uint8_t header[54] = {
+    'B', 'M',
+    (uint8_t)(fileSize), (uint8_t)(fileSize >> 8), (uint8_t)(fileSize >> 16), (uint8_t)(fileSize >> 24),
+    0, 0, 0, 0,
+    (uint8_t)(dataOffset), (uint8_t)(dataOffset >> 8), (uint8_t)(dataOffset >> 16), (uint8_t)(dataOffset >> 24),
+    40, 0, 0, 0,
+    (uint8_t)(width), (uint8_t)(width >> 8), (uint8_t)(width >> 16), (uint8_t)(width >> 24),
+    (uint8_t)(height), (uint8_t)(height >> 8), (uint8_t)(height >> 16), (uint8_t)(height >> 24),
+    1, 0,
+    (uint8_t)(bitsPerPixel), 0,
+    0, 0, 0, 0,
+    (uint8_t)(imageSize), (uint8_t)(imageSize >> 8), (uint8_t)(imageSize >> 16), (uint8_t)(imageSize >> 24),
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0
+  };
+
+  file.write(header, 54);
+
+  uint8_t *rowBuffer = (uint8_t *)malloc(rowSize);
+  if (!rowBuffer) {
+    Serial.println("Screenshot: Failed to allocate row buffer");
+    file.close();
+    return false;
+  }
+
+  for (int16_t y = height - 1; y >= 0; y--) {
+    for (int16_t x = 0; x < width; x++) {
+      uint32_t color = canvas->readPixel(x, y);
+      uint8_t r = (color >> 16) & 0xFF;
+      uint8_t g = (color >> 8) & 0xFF;
+      uint8_t b = color & 0xFF;
+      rowBuffer[x * 3] = b;
+      rowBuffer[x * 3 + 1] = g;
+      rowBuffer[x * 3 + 2] = r;
+    }
+    file.write(rowBuffer, rowSize);
+  }
+
+  free(rowBuffer);
+  file.close();
+
+  Serial.printf("Screenshot: Saved to %s (%dx%d)\n", filename, width, height);
+  return true;
+}
+
+void UI::captureScreenshotToSerial() {
+  if (!canvas || canvas->width() == 0 || canvas->height() == 0) {
+    Serial.println("SCREENSHOT_ERROR: Canvas not initialized");
+    return;
+  }
+
+  int16_t width = canvas->width();
+  int16_t height = canvas->height();
+
+  Serial.printf("SCREENSHOT_START:%d:%d\n", width, height);
+
+  for (int16_t y = 0; y < height; y++) {
+    for (int16_t x = 0; x < width; x++) {
+      uint32_t color = canvas->readPixel(x, y);
+      uint8_t r = (color >> 16) & 0xFF;
+      uint8_t g = (color >> 8) & 0xFF;
+      uint8_t b = color & 0xFF;
+      Serial.write(r);
+      Serial.write(g);
+      Serial.write(b);
+    }
+  }
+
+  Serial.println("SCREENSHOT_END");
+  Serial.printf("Screenshot: Sent %dx%d pixels over serial\n", width, height);
 }

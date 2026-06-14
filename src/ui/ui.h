@@ -13,4 +13,6 @@ public:
   ~UI();
   void drawSplash();
   void draw(const UIData &data);
+  bool captureScreenshot(const char *filename);
+  void captureScreenshotToSerial();
 };

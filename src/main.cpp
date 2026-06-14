@@ -1,36 +1,31 @@
 #include <Arduino.h>
-#include <BLE2902.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
 #include <M5Unified.h>
 #include <Wire.h>
+#include <FS.h>
+#include <SPIFFS.h>
 #include <cmath>
 #include <string>
 #include <vector>
-#include <FS.h>
-#include <SPIFFS.h>
-#include "ble/BLEBattery.h"
-#include "ble/OEPLog.h"
-#include "ble/OEPPressure.h"
+#include "ble/MxBleServer.h"
+#include "ble_scale/ScaleManager.h"
 #include "constants.h"
 #include "pressure_sensor/pressure_sensor.h"
+#include "settings/Settings.h"
 #include "ui/display_wrapper.h"
 #include "ui/ui.h"
-#include "ble_scale/ScaleManager.h"
 
 
 const int16_t PRESSURE_GRID_VALUES[] = {9, 6, 3, 0};
 const unsigned long AUTO_OFF_TIMEOUT = 10 * 60 * 1000;
+const unsigned long SCALE_STALE_TIMEOUT = 5000;
 
 M5GFX display;
 DisplayWrapper *displayWrapper = nullptr;
 UI ui(&display);
 PressureSensor *pressureSensor = nullptr;
-BLEBattery *bleBattery = nullptr;
-OEPLog *bleLog = nullptr;
-OEPPressure *blePressure = nullptr;
+mxcoffee::ble::MxBleServer bleServer;
 ScaleManager scaleManager;
+Settings settings;
 
 DeviceState defaultDeviceState = {
     .isAsleep = false,
@@ -55,7 +50,9 @@ DeviceState defaultDeviceState = {
     .flowRate = 0.0f,
     .lastScaleSampleTime = 0,
     .flowCalcStartTime = 0,
-    .flowCalcStartWeight = 0.0f
+    .flowCalcStartWeight = 0.0f,
+    .screenshotBtnPressTime = 0,
+    .screenshotPending = false
 };
 
 DeviceState deviceState = defaultDeviceState;
@@ -68,47 +65,67 @@ std::vector<uint32_t> pressureHistoryTimes;
 #define VERSION "0.0.1"
 #define DEBUG
 
-class MyServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer *pServer) override { deviceState.deviceConnected = true; }
-  void onDisconnect(BLEServer *pServer) override {
-    deviceState.deviceConnected = false;
-    pServer->startAdvertising();
-  }
-};
+void initBle();
+void deinitBle();
+void restoreSavedScale();
+void resetSessionState();
 
-bool bluetoothInitialized = false;
+void saveLastScale(const ScaleManager::SavedScale &scale) {
+  Settings::LastScaleConfig config;
+  snprintf(config.address, sizeof(config.address), "%s", scale.address.c_str());
+  snprintf(config.name, sizeof(config.name), "%s", scale.name.c_str());
+  config.addressType = static_cast<uint8_t>(scale.addressType);
+  config.scaleType = static_cast<uint8_t>(scale.type);
+  settings.saveLastScale(config);
+}
 
-void ensureBluetoothInit() {
-  if (!bluetoothInitialized) {
-    BLEDevice::init("PRS-mXcoffee");
-    bluetoothInitialized = true;
+void restoreSavedScale() {
+  Settings::LastScaleConfig config;
+  if (!settings.loadLastScale(config)) {
+    return;
   }
+
+  ScaleManager::SavedScale savedScale;
+  savedScale.address = config.address;
+  savedScale.name = config.name;
+  savedScale.addressType = static_cast<esp_ble_addr_type_t>(config.addressType);
+  savedScale.type = static_cast<ScaleManager::ScaleType>(config.scaleType);
+  scaleManager.restoreLastKnownScale(savedScale);
 }
 
 void resetBleState(bool releaseMemory) {
-  if (bleLog) {
-    delete bleLog;
-    bleLog = nullptr;
-  }
-  if (bleBattery) {
-    delete bleBattery;
-    bleBattery = nullptr;
-  }
-  if (blePressure) {
-    delete blePressure;
-    blePressure = nullptr;
-  }
+  bleServer.reset(releaseMemory);
+  deviceState.deviceConnected = false;
+  deviceState.lastBTSendSuccessful = false;
   deviceState.pServer = nullptr;
-  if (bluetoothInitialized) {
-    BLEDevice::deinit(releaseMemory);
-    bluetoothInitialized = false;
-  }
 }
 
 void resetPressureHistory() {
   pressureHistory.clear();
   weightHistory.clear();
   pressureHistoryTimes.clear();
+}
+
+void resetSessionState() {
+  deviceState.lastRefreshTime = 0;
+  deviceState.lastActivityTime = millis();
+  deviceState.lastWeightUpdateTime = 0;
+  deviceState.lastGraphChangeTime = 0;
+  deviceState.lastPressure = -1;
+  deviceState.lastGraphPressure = -1;
+  deviceState.lastGraphWeight = 0.0f;
+  deviceState.timerStartTime = 0;
+  deviceState.shotStartTime = 0;
+  deviceState.shotTotalTime = 0;
+  deviceState.isTimerRunning = false;
+  deviceState.shotWeight = scaleManager.isScaleConnected() ? scaleManager.getWeight() : 0.0f;
+  deviceState.lastShotWeight = deviceState.shotWeight;
+  deviceState.flowRate = 0.0f;
+  deviceState.lastScaleSampleTime = 0;
+  deviceState.flowCalcStartTime = 0;
+  deviceState.flowCalcStartWeight = deviceState.shotWeight;
+  deviceState.screenshotBtnPressTime = 0;
+  deviceState.screenshotPending = false;
 }
 
 void setup() {
@@ -146,6 +163,21 @@ void setup() {
   pressureSensor = new PressureSensor(&M5.Ex_I2C);
   Serial.println("Setup: Pressure sensor initialized");
 
+  if (!settings.begin()) {
+    Serial.println("Setup: Settings initialization failed");
+  } else {
+    scaleManager.setLastKnownScaleChangedCallback(saveLastScale);
+    restoreSavedScale();
+    deviceState.isBluetoothOn = settings.getBluetoothEnabled();
+    Serial.printf("Setup: Bluetooth state loaded: %s\n", deviceState.isBluetoothOn ? "ON" : "OFF");
+  }
+
+  if (deviceState.isBluetoothOn) {
+    initBle();
+    scaleManager.setBluetoothEnabled(true);
+    Serial.println("Setup: Bluetooth auto-enabled on boot");
+  }
+
   delay(150);
   pressureSensor->getPressure();
   delay(150);
@@ -168,33 +200,22 @@ void setup() {
   Serial.println("Setup: Complete");
 }
 
-// BLE and other functions remain unchanged
 void initBle() {
-  ensureBluetoothInit();
-  if (deviceState.pServer == nullptr) {
-    Serial.println("Creating new pServer");
-    bleLog = new OEPLog();
-    bleBattery = new BLEBattery(100);
-    blePressure = new OEPPressure();
-
-    BLEServer *pServer = BLEDevice::createServer();
-    deviceState.pServer = pServer;
-    pServer->setCallbacks(new MyServerCallbacks());
-
-    bleBattery->setupBatteryService(pServer);
-    bleLog->registerWithServer(pServer);
-    blePressure->registerWithServer(pServer);
+  if (!bleServer.begin(M5.Power.getBatteryLevel())) {
+    Serial.println("BLE: Failed to initialize");
+    deviceState.isBluetoothOn = false;
+    return;
   }
-  BLEAdvertising *pAdvertising = static_cast<BLEServer *>(deviceState.pServer)->getAdvertising();
-  pAdvertising->start();
+
+  bleServer.startAdvertising();
+  deviceState.deviceConnected = bleServer.isConnected();
   deviceState.isBluetoothOn = true;
 }
 
 void deinitBle() {
-  if (deviceState.pServer != nullptr) {
-    BLEAdvertising *pAdvertising = static_cast<BLEServer *>(deviceState.pServer)->getAdvertising();
-    pAdvertising->stop();
-  }
+  bleServer.stopAdvertising();
+  deviceState.deviceConnected = false;
+  deviceState.lastBTSendSuccessful = false;
   deviceState.isBluetoothOn = false;
 }
 
@@ -209,12 +230,8 @@ int16_t getPressure() {
 
 void sendToBle(int16_t pressure) {
   if (deviceState.isBluetoothOn) {
-    if (deviceState.deviceConnected) {
-      blePressure->updatePressure(pressure);
-      deviceState.lastBTSendSuccessful = true;
-    } else {
-      deviceState.lastBTSendSuccessful = false;
-    }
+    deviceState.deviceConnected = bleServer.isConnected();
+    deviceState.lastBTSendSuccessful = bleServer.notifyPressure(pressure);
   }
 }
 
@@ -272,11 +289,17 @@ void loop() {
     }
     setTimer(currentPressure);
     sendToBle(currentPressure);
+    int32_t batteryLevel = M5.Power.getBatteryLevel();
+    if (deviceState.isBluetoothOn) {
+      bleServer.setBatteryLevel(batteryLevel);
+      deviceState.deviceConnected = bleServer.isConnected();
+    }
 
     unsigned long currentTime = millis();
 
     scaleManager.poll(currentTime);
-    if (scaleManager.isScaleConnected()) {
+    bool scaleConnected = scaleManager.isScaleConnected();
+    if (scaleConnected) {
       float scaleWeight = scaleManager.getWeight();
       deviceState.lastScaleSampleTime = currentTime;
 
@@ -307,18 +330,24 @@ void loop() {
         }
       }
 
-      if (currentTime - deviceState.lastScaleSampleTime > 2000) {
-        deviceState.flowRate = 0.0f;
-      }
     } else {
-      deviceState.lastWeightUpdateTime = 0;
+      bool scaleRecentlyActive =
+          deviceState.lastScaleSampleTime != 0 &&
+          currentTime - deviceState.lastScaleSampleTime <= SCALE_STALE_TIMEOUT;
       deviceState.flowRate = 0.0f;
-      deviceState.shotWeight = 0.0f;
-      deviceState.lastShotWeight = 0.0f;
-      deviceState.lastScaleSampleTime = 0;
-      deviceState.flowCalcStartTime = 0;
-      deviceState.flowCalcStartWeight = 0.0f;
+      if (!scaleRecentlyActive) {
+        deviceState.lastWeightUpdateTime = 0;
+        deviceState.shotWeight = 0.0f;
+        deviceState.lastShotWeight = 0.0f;
+        deviceState.lastScaleSampleTime = 0;
+        deviceState.flowCalcStartTime = 0;
+        deviceState.flowCalcStartWeight = 0.0f;
+      }
     }
+    bool scaleVisible =
+        scaleConnected ||
+        (deviceState.lastScaleSampleTime != 0 &&
+         currentTime - deviceState.lastScaleSampleTime <= SCALE_STALE_TIMEOUT);
 
     float currentWeight = deviceState.shotWeight;
     if (deviceState.lastGraphChangeTime == 0) {
@@ -354,7 +383,7 @@ void loop() {
         .hexData = pressureSensor->getHexData(),
         .isBluetoothOn = deviceState.isBluetoothOn,
         .lastBTSendSuccessful = deviceState.lastBTSendSuccessful,
-        .batteryLevel = M5.Power.getBatteryLevel(),
+        .batteryLevel = batteryLevel,
         .debugMode = deviceState.debugMode,
         .shotTotalTime = deviceState.shotTotalTime,
         .displayWidth = static_cast<int16_t>(M5.Display.width()),
@@ -363,24 +392,48 @@ void loop() {
         .deviceConnected = deviceState.deviceConnected,
         .shotWeight = deviceState.shotWeight,
         .flowRate = deviceState.flowRate,
-        .scaleConnected = scaleManager.isScaleConnected(),
+        .scaleConnected = scaleVisible,
         .scaleName = scaleManager.getScaleName(),
         .nearbyScales = scaleManager.getNearbyScalesSummary()
     };
     std::copy(pressureValues, pressureValues + PRESSURE_VALUES_LEN, data.pressureValues);
     ui.draw(data);
+    if (deviceState.screenshotPending) {
+      deviceState.screenshotPending = false;
+      char filename[32];
+      snprintf(filename, sizeof(filename), "/screenshot_%lu.bmp", millis());
+      ui.captureScreenshot(filename);
+    }
     Serial.println("Loop: Display updated");
   }
 
   if (M5.BtnA.wasPressed()) {
-    deviceState.debugMode = !deviceState.debugMode;
-    Serial.println("Loop: Debug mode toggled");
+    deviceState.screenshotBtnPressTime = millis();
+  }
+  if (M5.BtnA.isPressed() && deviceState.screenshotBtnPressTime > 0) {
+    if (millis() - deviceState.screenshotBtnPressTime >= 1000) {
+      deviceState.screenshotPending = true;
+      deviceState.screenshotBtnPressTime = 0;
+      if (displayWrapper) {
+        displayWrapper->drawCenterString("Screenshot...", displayWrapper->width() / 2, displayWrapper->height() / 2);
+      }
+      Serial.println("Loop: Screenshot triggered");
+    }
+  }
+  if (M5.BtnA.wasReleased() && deviceState.screenshotBtnPressTime > 0) {
+    if (millis() - deviceState.screenshotBtnPressTime < 1000) {
+      deviceState.debugMode = !deviceState.debugMode;
+      Serial.println("Loop: Debug mode toggled");
+    }
+    deviceState.screenshotBtnPressTime = 0;
   }
   if (M5.BtnB.wasPressed()) {
     deviceState.isBluetoothOn = !deviceState.isBluetoothOn;
     if (deviceState.isBluetoothOn) {
       initBle();
+      restoreSavedScale();
       scaleManager.setBluetoothEnabled(true);
+      settings.setBluetoothEnabled(true);
       String btStatus = String("Bluetooth is ") + (deviceState.isBluetoothOn ? "on" : "off");
       if (displayWrapper) {
         displayWrapper->drawCenterString(btStatus, displayWrapper->width() / 2, displayWrapper->height() / 2);
@@ -389,6 +442,7 @@ void loop() {
     } else {
       deinitBle();
       scaleManager.setBluetoothEnabled(false);
+      settings.setBluetoothEnabled(false);
       String btStatus = String("Bluetooth is ") + (deviceState.isBluetoothOn ? "on" : "off");
       if (displayWrapper) {
         displayWrapper->drawCenterString(btStatus, displayWrapper->width() / 2, displayWrapper->height() / 2);
@@ -398,18 +452,14 @@ void loop() {
     Serial.println("Loop: Bluetooth toggled");
   }
   if (M5.BtnC.wasPressed()) {
-    // Reset state
-    deviceState = defaultDeviceState;
+    resetSessionState();
     std::fill(pressureValues, pressureValues + PRESSURE_VALUES_LEN, 0);
     resetPressureHistory();
     scaleManager.reset();
     if (pressureSensor) {
       pressureSensor->resetSimulation();
     }
-    deinitBle();
-    scaleManager.setBluetoothEnabled(false);
-    resetBleState(false);
-    Serial.println("Loop: State reset");
+    Serial.println("Loop: Session state reset");
     delay(1000);
   }
 }

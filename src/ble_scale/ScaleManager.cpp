@@ -46,6 +46,7 @@ void ScaleManager::setBluetoothEnabled(bool enabled) {
     m_lastScanMs = 0;
     m_scan = nullptr;
     m_hasLastKnown = false;
+    m_lastKnownFromStorage = false;
     m_lastConnectAttemptMs = 0;
     m_pendingConnect = false;
   } else {
@@ -161,6 +162,48 @@ void ScaleManager::reset() {
   m_simulatedWeight = 0.0f;
   m_simulatedStartMs = 0;
   m_simulatedLastMs = 0;
+#endif
+}
+
+void ScaleManager::setLastKnownScaleChangedCallback(LastKnownScaleChangedCallback callback) {
+  m_lastKnownScaleChangedCallback = callback;
+}
+
+bool ScaleManager::restoreLastKnownScale(const SavedScale &scale) {
+#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
+  return false;
+#else
+  if (scale.address.empty() || scale.type == ScaleType::Unknown) {
+    return false;
+  }
+
+  m_lastKnown.address = BLEAddress(scale.address);
+  m_lastKnown.addressType = scale.addressType;
+  m_lastKnown.name = scale.name.empty() ? "Unknown" : scale.name;
+  m_lastKnown.rssi = -1000;
+  m_lastKnown.lastSeenMs = 0;
+  m_lastKnown.type = scale.type;
+  m_hasLastKnown = true;
+  m_lastKnownFromStorage = true;
+  Serial.printf("ScaleManager: Restored last scale %s (%s)\n",
+                m_lastKnown.name.c_str(), m_lastKnown.address.toString().c_str());
+  return true;
+#endif
+}
+
+bool ScaleManager::getLastKnownScale(SavedScale &scale) {
+#if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
+  return false;
+#else
+  if (!m_hasLastKnown || m_lastKnown.type == ScaleType::Unknown) {
+    return false;
+  }
+
+  scale.address = m_lastKnown.address.toString();
+  scale.addressType = m_lastKnown.addressType;
+  scale.name = m_lastKnown.name;
+  scale.type = m_lastKnown.type;
+  return true;
 #endif
 }
 
@@ -293,6 +336,10 @@ void ScaleManager::recordCandidate(BLEAdvertisedDevice &device, ScaleType type, 
         m_candidates[i].name = device.getName();
       }
       m_candidates[i].type = type;
+      if (m_hasLastKnown && m_lastKnown.address.equals(address)) {
+        m_lastKnown = m_candidates[i];
+        m_lastKnownFromStorage = false;
+      }
       return;
     }
   }
@@ -321,6 +368,7 @@ void ScaleManager::recordCandidate(BLEAdvertisedDevice &device, ScaleType type, 
 
   m_lastKnown = m_candidates[insertIndex];
   m_hasLastKnown = true;
+  m_lastKnownFromStorage = false;
 }
 
 void ScaleManager::tryConnectCandidate() {
@@ -362,6 +410,8 @@ void ScaleManager::tryConnectCandidate() {
   m_activeScale = scale;
   m_lastKnown = m_candidates[bestIndex];
   m_hasLastKnown = true;
+  m_lastKnownFromStorage = false;
+  notifyLastKnownScaleChanged();
   stopScan();
 }
 
@@ -370,7 +420,7 @@ void ScaleManager::tryConnectLastKnown(uint32_t nowMs) {
     return;
   }
   const uint32_t staleMs = 15000;
-  if (nowMs - m_lastKnown.lastSeenMs > staleMs) {
+  if (!m_lastKnownFromStorage && nowMs - m_lastKnown.lastSeenMs > staleMs) {
     return;
   }
   if (nowMs - m_lastConnectAttemptMs < 5000) {
@@ -402,6 +452,7 @@ void ScaleManager::tryConnectLastKnown(uint32_t nowMs) {
 
   m_client = client;
   m_activeScale = scale;
+  notifyLastKnownScaleChanged();
   stopScan();
 }
 
@@ -414,5 +465,16 @@ void ScaleManager::clearActiveScale() {
   if (m_client) {
     delete m_client;
     m_client = nullptr;
+  }
+}
+
+void ScaleManager::notifyLastKnownScaleChanged() {
+  if (!m_lastKnownScaleChangedCallback) {
+    return;
+  }
+
+  SavedScale savedScale;
+  if (getLastKnownScale(savedScale)) {
+    m_lastKnownScaleChangedCallback(savedScale);
   }
 }

@@ -14,10 +14,22 @@ public:
     LfSmartScale
   };
 
+  struct SavedScale {
+    std::string address;
+    esp_ble_addr_type_t addressType = BLE_ADDR_TYPE_PUBLIC;
+    std::string name;
+    ScaleType type = ScaleType::Unknown;
+  };
+
+  using LastKnownScaleChangedCallback = void (*)(const SavedScale &scale);
+
   void begin();
   void setBluetoothEnabled(bool enabled);
   void poll(uint32_t nowMs);
   void reset();
+  void setLastKnownScaleChangedCallback(LastKnownScaleChangedCallback callback);
+  bool restoreLastKnownScale(const SavedScale &scale);
+  bool getLastKnownScale(SavedScale &scale);
 
   bool isBluetoothEnabled() const;
   bool isScaleConnected() const;
@@ -51,6 +63,7 @@ private:
   void tryConnectCandidate();
   void tryConnectLastKnown(uint32_t nowMs);
   void clearActiveScale();
+  void notifyLastKnownScaleChanged();
 
   static ScaleManager *s_instance;
 
@@ -66,8 +79,10 @@ private:
   ScaleDevice *m_activeScale = nullptr;
   bool m_hasLastKnown = false;
   ScaleCandidate m_lastKnown;
+  bool m_lastKnownFromStorage = false;
   uint32_t m_lastConnectAttemptMs = 0;
   bool m_pendingConnect = false;
+  LastKnownScaleChangedCallback m_lastKnownScaleChangedCallback = nullptr;
 
 #if defined(SHOT_WEIGHT_SIMULATED) && SHOT_WEIGHT_SIMULATED
   float m_simulatedWeight = 0.0f;
