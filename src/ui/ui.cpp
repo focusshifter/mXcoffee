@@ -305,20 +305,18 @@ void UI::draw(const UIData &data) {
   canvas->setTextColor(THEME_PANEL_HEADER_TEXT, THEME_PANEL_OUTER_BG);
   canvas->drawString("SHOT TIME", 2, 2);
 
-  if (data.scaleConnected) {
-    canvas->fillRect(110, 0, 100, 80, THEME_PANEL_OUTER_BG);
-    canvas->fillRect(112, 18, 96, 60, THEME_PANEL_INNER_BG);
-    canvas->setTextColor(THEME_PANEL_HEADER_TEXT, THEME_PANEL_OUTER_BG);
-    canvas->drawString("WEIGHT G", 112, 2);
+  canvas->fillRect(110, 0, 100, 80, THEME_PANEL_OUTER_BG);
+  canvas->fillRect(112, 18, 96, 60, THEME_PANEL_INNER_BG);
+  canvas->setTextColor(THEME_PANEL_HEADER_TEXT, THEME_PANEL_OUTER_BG);
+  canvas->drawString("WEIGHT G", 112, 2);
 
-    canvas->setTextColor(THEME_PANEL_TEXT, THEME_PANEL_INNER_BG);
+  canvas->setTextColor(THEME_PANEL_TEXT, THEME_PANEL_INNER_BG);
 
-    canvas->loadFont(MoonGloss_16);
-    String weightStr = String(data.shotWeight, 1) + "g";
-    canvas->drawRightString(weightStr, 200, 30);
-    String flowStr = String(data.flowRate, 1) + " g/s";
-    canvas->drawRightString(flowStr, 200, 50);
-  }
+  canvas->loadFont(MoonGloss_16);
+  String weightStr = String(data.shotWeight, 1) + "g";
+  canvas->drawRightString(weightStr, 200, 30);
+  String flowStr = String(data.flowRate, 1) + " g/s";
+  canvas->drawRightString(flowStr, 200, 50);
   
   canvas->loadFont(MoonGloss_48);
 
