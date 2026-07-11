@@ -1,5 +1,3 @@
-#[cfg(feature = "benchmark")]
-mod benchmark;
 mod ble_server;
 mod display_interface;
 mod pressure_sensor;
@@ -455,7 +453,7 @@ fn run_display_benchmarks<SPI, DC>(
     SPI: embedded_hal::spi::SpiDevice,
     DC: embedded_hal::digital::OutputPin,
 {
-    use benchmark::BenchmarkStats;
+    use mxcoffee::benchmark::BenchmarkStats;
 
     const ITERATIONS: usize = 105;
     const WARMUP: usize = 5;

@@ -10,6 +10,11 @@ rust-version = "1.77"
 name = "mxcoffee"
 harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
 
+[[bin]]
+name = "m5-benchmark"
+path = "src/bin/m5_benchmark.rs"
+required-features = ["benchmark"]
+
 [profile.release]
 opt-level = "s"
 
@@ -37,6 +42,10 @@ axp2101 = "0.1.0"
 heapless = "0.8"
 embedded-graphics-framebuf = "0.5"
 enumset = "1.1"
+m5unified = "0.3.8"
 
 [build-dependencies]
 embuild = { version = "0.33", features = ["espidf"] }
+
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components"]

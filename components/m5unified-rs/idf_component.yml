@@ -1,0 +1,6 @@
+description: Rust-facing C ABI shim component for M5Unified
+url: https://github.com/mfiumara/m5unified-rs
+repository: https://github.com/mfiumara/m5unified-rs.git
+version: 0.3.8
+dependencies:
+  idf: ">=5.0,<5.5"
