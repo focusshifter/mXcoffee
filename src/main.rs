@@ -1,10 +1,12 @@
 #[cfg(feature = "benchmark")]
 mod benchmark;
 mod pressure_sensor;
+mod settings;
 mod touch;
 mod ui;
 
 use crate::pressure_sensor::PressureSensor;
+use crate::settings::Settings;
 use crate::touch::{Button, TouchButtons};
 use crate::ui::{draw_center_message, draw_main_screen, UiData};
 
@@ -54,10 +56,10 @@ struct DeviceState {
 }
 
 impl DeviceState {
-    fn new(now_ms: u64) -> Self {
+    fn new(now_ms: u64, bluetooth_on: bool) -> Self {
         Self {
             is_asleep: false,
-            bluetooth_on: false,
+            bluetooth_on,
             bt_connected: false,
             last_bt_send_successful: false,
             debug_mode: false,
@@ -170,6 +172,18 @@ fn main() {
     let peripherals = Peripherals::take().unwrap();
     let gpios = peripherals.pins;
 
+    let settings = match Settings::new() {
+        Ok(settings) => Some(settings),
+        Err(err) => {
+            println!("Settings initialization failed: {err:?}");
+            None
+        }
+    };
+    let bluetooth_enabled = settings
+        .as_ref()
+        .and_then(|settings| settings.bluetooth_enabled().ok())
+        .unwrap_or(false);
+
     let pin_dc = PinDriver::output(gpios.gpio15).unwrap();
     let mut lcd_reset_pin = PinDriver::output(gpios.gpio33).unwrap();
 
@@ -222,7 +236,7 @@ fn main() {
     let mut touch_buttons = TouchButtons::new();
     let mut pressure_history = [0i16; PRESSURE_HISTORY_LEN];
 
-    let mut state = DeviceState::new(now_ms());
+    let mut state = DeviceState::new(now_ms(), bluetooth_enabled);
     let mut framebuffer = Box::new([Rgb565::BLACK; PIXEL_COUNT]);
 
     #[cfg(feature = "benchmark")]
@@ -255,6 +269,11 @@ fn main() {
 
         if buttons.is_pressed(Button::B) {
             state.bluetooth_on = !state.bluetooth_on;
+            if let Some(settings) = settings.as_ref() {
+                if let Err(err) = settings.set_bluetooth_enabled(state.bluetooth_on) {
+                    println!("Failed to persist Bluetooth state: {err:?}");
+                }
+            }
             state.bt_connected = false;
             state.last_bt_send_successful = false;
             let message = if state.bluetooth_on {
