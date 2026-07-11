@@ -23,3 +23,8 @@ scripts/check-display-benchmark.sh benchmarks/results/2026-07-11-raw-16k-40mhz.j
 Visual inspection of alternating solid frames and the RGB/checkerboard pattern
 is still required; serial timing cannot detect color or pixel corruption.
 Use `--features benchmark-soak` for the additional 1,000-upload run.
+
+`2026-07-11-cpp-current-ui-40mhz.jsonl` records the C++ parity oracle's
+existing `UI::draw` profiler around its 24-bit full-canvas redraw and
+`pushSprite`. It is an end-to-end UI reference, not an isolated upload result,
+and is therefore not input to `check-display-benchmark.sh`.
