@@ -21,6 +21,7 @@ opt-level = "z"
 default = []
 
 experimental = ["esp-idf-svc/experimental"]
+benchmark = []
 
 [dependencies]
 log = "0.4"

@@ -1,3 +1,5 @@
+#[cfg(feature = "benchmark")]
+mod benchmark;
 mod pressure_sensor;
 mod touch;
 mod ui;
@@ -15,7 +17,10 @@ use esp_idf_hal::gpio::PinDriver;
 use esp_idf_hal::i2c::{I2cConfig, I2cDriver};
 use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::prelude::*;
-use esp_idf_hal::spi::{config, SpiDeviceDriver, SpiDriver, SpiDriverConfig, SPI2};
+use esp_idf_hal::spi::{
+    config::{self, Duplex},
+    Dma, SpiDeviceDriver, SpiDriver, SpiDriverConfig, SPI2,
+};
 use esp_idf_sys::EspError;
 use mipidsi::interface::SpiInterface;
 use mipidsi::options::{ColorInversion, ColorOrder};
@@ -28,6 +33,8 @@ const PIXEL_COUNT: usize = DISPLAY_WIDTH * DISPLAY_HEIGHT;
 const PRESSURE_HISTORY_LEN: usize = 160;
 const AUTO_OFF_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 const REFRESH_INTERVAL_MS: u64 = 20;
+const DISPLAY_SPI_HZ: u32 = 40_000_000;
+const DISPLAY_TRANSFER_BUFFER_SIZE: usize = 4096;
 
 struct DeviceState {
     is_asleep: bool,
@@ -112,11 +119,7 @@ fn read_battery_percentage(i2c: &mut I2cDriver<'_>) -> Result<u8, EspError> {
 }
 
 fn send_to_ble(state: &mut DeviceState, _pressure: i16) {
-    if state.bluetooth_on {
-        state.last_bt_send_successful = true;
-    } else {
-        state.last_bt_send_successful = false;
-    }
+    state.last_bt_send_successful = state.bluetooth_on;
 }
 
 fn configure_core2_power(i2c: &mut I2cDriver<'_>) -> Result<(), EspError> {
@@ -220,15 +223,18 @@ fn main() {
         gpios.gpio18,
         gpios.gpio23,
         Some(gpios.gpio19),
-        &SpiDriverConfig::new(),
+        &SpiDriverConfig::new().dma(Dma::Auto(DISPLAY_TRANSFER_BUFFER_SIZE)),
     )
     .unwrap();
 
-    let spi_device_config = config::Config::new().baudrate(26.MHz().into());
+    let spi_device_config = config::Config::new()
+        .baudrate(DISPLAY_SPI_HZ.Hz())
+        .duplex(Duplex::Half)
+        .write_only(true);
     let spi_device = SpiDeviceDriver::new(driver, Some(gpios.gpio5), &spi_device_config).unwrap();
 
-    let mut spi_buffer = [0u8; 128];
-    let display_interface = SpiInterface::new(spi_device, pin_dc, &mut spi_buffer);
+    let mut spi_buffer = Box::new([0u8; DISPLAY_TRANSFER_BUFFER_SIZE]);
+    let display_interface = SpiInterface::new(spi_device, pin_dc, spi_buffer.as_mut());
 
     let mut display = Builder::new(ILI9342CRgb565, display_interface)
         .display_size(320, 240)
@@ -244,6 +250,9 @@ fn main() {
 
     let mut state = DeviceState::new(now_ms());
     let mut framebuffer = Box::new([Rgb565::BLACK; PIXEL_COUNT]);
+
+    #[cfg(feature = "benchmark")]
+    run_display_benchmarks(&mut display, framebuffer.as_mut());
 
     loop {
         let now = now_ms();
@@ -408,4 +417,100 @@ fn main() {
 
         FreeRtos::delay_ms(2);
     }
+}
+
+#[cfg(feature = "benchmark")]
+fn run_display_benchmarks<DI, RST>(
+    display: &mut mipidsi::Display<DI, ILI9342CRgb565, RST>,
+    framebuffer: &mut [Rgb565; PIXEL_COUNT],
+) where
+    DI: mipidsi::interface::Interface<Word = u8>,
+    DI::Error: core::fmt::Debug,
+    RST: embedded_hal::digital::OutputPin,
+{
+    use benchmark::BenchmarkStats;
+
+    const ITERATIONS: usize = 105;
+    const WARMUP: usize = 5;
+    const FRAME_BYTES: usize = PIXEL_COUNT * 2;
+
+    println!(
+        "{{\"type\":\"benchmark_config\",\"spi_hz\":{},\"transfer_buffer\":{},\"dma\":true,\"width\":{},\"height\":{}}}",
+        DISPLAY_SPI_HZ, DISPLAY_TRANSFER_BUFFER_SIZE, DISPLAY_WIDTH, DISPLAY_HEIGHT
+    );
+
+    let mut spi_stats = BenchmarkStats::new("spi_alternating_frame", FRAME_BYTES);
+    for iteration in 0..ITERATIONS {
+        let color = if iteration % 2 == 0 {
+            Rgb565::new(31, 0, 0)
+        } else {
+            Rgb565::new(0, 0, 31)
+        };
+        framebuffer.fill(color);
+        let started = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        display
+            .set_pixels(
+                0,
+                0,
+                (DISPLAY_WIDTH - 1) as u16,
+                (DISPLAY_HEIGHT - 1) as u16,
+                framebuffer.iter().copied(),
+            )
+            .expect("benchmark SPI transfer failed");
+        let ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        spi_stats.record(ended.saturating_sub(started));
+    }
+    spi_stats.report(WARMUP);
+
+    let mut history = [0i16; PRESSURE_HISTORY_LEN];
+    for (index, value) in history.iter_mut().enumerate() {
+        *value = ((index as i32 * 9_000) / PRESSURE_HISTORY_LEN as i32) as i16;
+    }
+
+    let mut render_stats = BenchmarkStats::new("render_dynamic_ui", 0);
+    let mut frame_stats = BenchmarkStats::new("frame_dynamic", FRAME_BYTES);
+    for iteration in 0..ITERATIONS {
+        history.rotate_left(1);
+        history[PRESSURE_HISTORY_LEN - 1] = ((iteration * 97) % 10_000) as i16;
+        let data = UiData {
+            pressure_history: &history,
+            last_pressure: history[PRESSURE_HISTORY_LEN - 1],
+            max_sensor_pressure: 20_000,
+            battery_percent: 87,
+            bluetooth_on: true,
+            bt_send_success: iteration % 3 != 0,
+            shot_time_secs: iteration as f32 / 10.0,
+            pressure_hex: "01 02 03",
+            debug_mode: false,
+            last_refresh_ms: iteration as u64 * 20,
+            last_activity_ms: 0,
+            now_ms: iteration as u64 * 20,
+            auto_off_timeout_ms: AUTO_OFF_TIMEOUT_MS,
+            timer_running: true,
+            frame_indicator: iteration % 2 == 0,
+        };
+
+        let frame_started = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        let render_started = frame_started;
+        {
+            let mut fb = FrameBuf::new(&mut *framebuffer, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+            fb.clear(Rgb565::BLACK).ok();
+            draw_main_screen(&mut fb, data).expect("benchmark render failed");
+        }
+        let render_ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        render_stats.record(render_ended.saturating_sub(render_started));
+        display
+            .set_pixels(
+                0,
+                0,
+                (DISPLAY_WIDTH - 1) as u16,
+                (DISPLAY_HEIGHT - 1) as u16,
+                framebuffer.iter().copied(),
+            )
+            .expect("benchmark frame transfer failed");
+        let frame_ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        frame_stats.record(frame_ended.saturating_sub(frame_started));
+    }
+    render_stats.report(WARMUP);
+    frame_stats.report(WARMUP);
 }

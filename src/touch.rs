@@ -16,6 +16,7 @@ pub enum Button {
 
 #[derive(Default, Debug, Clone)]
 pub struct ButtonSnapshot {
+    #[allow(dead_code)] // Used by the parity implementation for long-press gestures.
     pub held: [bool; 3],
     pub pressed: [bool; 3],
 }
@@ -77,7 +78,7 @@ impl TouchButtons {
 
                 let (x, y) = transform_coordinates(x, y);
 
-                if y >= BUTTON_ZONE_Y && y <= SCREEN_HEIGHT {
+                if (BUTTON_ZONE_Y..=SCREEN_HEIGHT).contains(&y) {
                     let segment = SCREEN_WIDTH / 3;
                     if x < segment {
                         current[0] = true;
@@ -90,8 +91,10 @@ impl TouchButtons {
             }
         }
 
-        let mut snapshot = ButtonSnapshot::default();
-        snapshot.held = current;
+        let mut snapshot = ButtonSnapshot {
+            held: current,
+            ..ButtonSnapshot::default()
+        };
 
         for (idx, (&now, &was)) in current.iter().zip(self.previous.iter()).enumerate() {
             snapshot.pressed[idx] = now && !was;
