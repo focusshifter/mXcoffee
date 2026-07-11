@@ -354,6 +354,8 @@ fn main() {
     let mut state = DeviceState::new(now_ms(), bluetooth_enabled);
     #[cfg(feature = "demo")]
     let demo_started_ms = now_ms();
+    #[cfg(feature = "demo")]
+    let mut demo_scale = mxcoffee::demo::SimulatedScale::default();
     let mut framebuffer = Box::new([Rgb565::BLACK; PIXEL_COUNT]);
 
     #[cfg(feature = "benchmark")]
@@ -560,13 +562,20 @@ fn main() {
         }
         state.last_pressure = Some(pressure);
 
+        state.session.update_pressure(pressure, now);
+        #[cfg(feature = "demo")]
+        state.session.update_scale(
+            true,
+            demo_scale.update(now.saturating_sub(demo_started_ms)),
+            now,
+        );
+
         pressure_history.rotate_left(1);
         pressure_history[PRESSURE_HISTORY_LEN - 1] = pressure;
         weight_history.rotate_left(1);
         weight_history[PRESSURE_HISTORY_LEN - 1] =
             (state.session.shot_weight * 10.0).clamp(0.0, i16::MAX as f32) as i16;
 
-        state.session.update_pressure(pressure, now);
         state.bt_connected = ble_server.is_connected();
         state.last_bt_send_successful = if state.bluetooth_on {
             ble_server.notify_pressure(pressure).unwrap_or_else(|err| {
