@@ -1,5 +1,7 @@
 #[cfg(feature = "benchmark")]
 mod benchmark;
+mod ble_server;
+mod display_interface;
 mod pressure_sensor;
 mod settings;
 mod touch;
@@ -9,11 +11,16 @@ use crate::pressure_sensor::PressureSensor;
 use crate::settings::Settings;
 use crate::touch::{Button, TouchButtons};
 use crate::ui::{draw_center_message, draw_main_screen, UiData};
+use ble_server::MxBleServer;
+use display_interface::FastSpiInterface;
 
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use embedded_graphics::prelude::*;
-use embedded_graphics_framebuf::FrameBuf;
+use embedded_graphics_framebuf::{
+    backends::{EndianCorrectedBuffer, EndianCorrection},
+    FrameBuf,
+};
 use esp_idf_hal::delay::{FreeRtos, TickType};
 use esp_idf_hal::gpio::PinDriver;
 use esp_idf_hal::i2c::{I2cConfig, I2cDriver};
@@ -23,8 +30,8 @@ use esp_idf_hal::spi::{
     config::{self, Duplex},
     Dma, SpiDeviceDriver, SpiDriver, SpiDriverConfig, SPI2,
 };
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_sys::EspError;
-use mipidsi::interface::SpiInterface;
 use mipidsi::options::{ColorInversion, ColorOrder};
 use mipidsi::{models::ILI9342CRgb565, Builder};
 use mxcoffee::session::SessionState;
@@ -37,7 +44,7 @@ const PRESSURE_HISTORY_LEN: usize = 160;
 const AUTO_OFF_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 const REFRESH_INTERVAL_MS: u64 = 20;
 const DISPLAY_SPI_HZ: u32 = 40_000_000;
-const DISPLAY_TRANSFER_BUFFER_SIZE: usize = 4096;
+const DISPLAY_TRANSFER_BUFFER_SIZE: usize = 16 * 1024;
 
 struct DeviceState {
     is_asleep: bool,
@@ -92,10 +99,6 @@ fn read_battery_percentage(i2c: &mut I2cDriver<'_>) -> Result<u8, EspError> {
         TickType::new_millis(10).ticks(),
     )?;
     Ok(buffer[0])
-}
-
-fn send_to_ble(state: &mut DeviceState, _pressure: i16) {
-    state.last_bt_send_successful = state.bluetooth_on;
 }
 
 fn configure_core2_power(i2c: &mut I2cDriver<'_>) -> Result<(), EspError> {
@@ -172,7 +175,8 @@ fn main() {
     let peripherals = Peripherals::take().unwrap();
     let gpios = peripherals.pins;
 
-    let settings = match Settings::new() {
+    let nvs_partition = EspDefaultNvsPartition::take().expect("NVS initialization failed");
+    let settings = match Settings::new(nvs_partition.clone()) {
         Ok(settings) => Some(settings),
         Err(err) => {
             println!("Settings initialization failed: {err:?}");
@@ -183,6 +187,9 @@ fn main() {
         .as_ref()
         .and_then(|settings| settings.bluetooth_enabled().ok())
         .unwrap_or(false);
+    let ble_server = MxBleServer::new(peripherals.modem, nvs_partition, bluetooth_enabled)
+        .expect("BLE initialization failed");
+    let _ = ble_server.log(b"Rust firmware started");
 
     let pin_dc = PinDriver::output(gpios.gpio15).unwrap();
     let mut lcd_reset_pin = PinDriver::output(gpios.gpio33).unwrap();
@@ -195,7 +202,23 @@ fn main() {
     )
     .unwrap();
 
-    configure_core2_power(&mut i2c).expect("Failed to configure AXP2101");
+    let mut power_configured = false;
+    for _ in 0..3 {
+        match configure_core2_power(&mut i2c) {
+            Ok(()) => {
+                power_configured = true;
+                break;
+            }
+            Err(err) => {
+                println!("AXP2101 configuration attempt failed: {err:?}");
+                FreeRtos::delay_ms(25);
+            }
+        }
+    }
+    assert!(
+        power_configured,
+        "Failed to configure AXP2101 after retries"
+    );
 
     let mut pin_lcd_blk = PinDriver::output(gpios.gpio32).unwrap();
     pin_lcd_blk.set_high().ok();
@@ -222,15 +245,16 @@ fn main() {
     let spi_device = SpiDeviceDriver::new(driver, Some(gpios.gpio5), &spi_device_config).unwrap();
 
     let mut spi_buffer = Box::new([0u8; DISPLAY_TRANSFER_BUFFER_SIZE]);
-    let display_interface = SpiInterface::new(spi_device, pin_dc, spi_buffer.as_mut());
+    let display_interface = FastSpiInterface::new(spi_device, pin_dc, spi_buffer.as_mut());
 
-    let mut display = Builder::new(ILI9342CRgb565, display_interface)
+    let display = Builder::new(ILI9342CRgb565, display_interface)
         .display_size(320, 240)
         .color_order(ColorOrder::Bgr)
         .invert_colors(ColorInversion::Inverted)
         .reset_pin(lcd_reset_pin)
         .init(&mut FreeRtos)
         .unwrap();
+    let (mut display_interface, _, _) = display.release();
 
     let mut pressure_sensor = PressureSensor::new();
     let mut touch_buttons = TouchButtons::new();
@@ -240,7 +264,7 @@ fn main() {
     let mut framebuffer = Box::new([Rgb565::BLACK; PIXEL_COUNT]);
 
     #[cfg(feature = "benchmark")]
-    run_display_benchmarks(&mut display, framebuffer.as_mut());
+    run_display_benchmarks(&mut display_interface, framebuffer.as_mut());
 
     loop {
         let now = now_ms();
@@ -269,6 +293,10 @@ fn main() {
 
         if buttons.is_pressed(Button::B) {
             state.bluetooth_on = !state.bluetooth_on;
+            if let Err(err) = ble_server.set_enabled(state.bluetooth_on) {
+                println!("Failed to toggle Bluetooth: {err:?}");
+                state.bluetooth_on = !state.bluetooth_on;
+            }
             if let Some(settings) = settings.as_ref() {
                 if let Err(err) = settings.set_bluetooth_enabled(state.bluetooth_on) {
                     println!("Failed to persist Bluetooth state: {err:?}");
@@ -283,17 +311,15 @@ fn main() {
             };
             {
                 let fb_buf = framebuffer.as_mut();
-                let mut fb = FrameBuf::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+                let mut fb = FrameBuf::new(
+                    EndianCorrectedBuffer::new(fb_buf, EndianCorrection::ToBigEndian),
+                    DISPLAY_WIDTH,
+                    DISPLAY_HEIGHT,
+                );
                 fb.clear(Rgb565::BLACK).ok();
                 let _ = draw_center_message(&mut fb, message);
             }
-            if let Err(err) = display.set_pixels(
-                0,
-                0,
-                (DISPLAY_WIDTH - 1) as u16,
-                (DISPLAY_HEIGHT - 1) as u16,
-                framebuffer.iter().copied(),
-            ) {
+            if let Err(err) = display_interface.send_frame(framebuffer.as_ref()) {
                 println!("Display update failed: {err:?}");
             }
             FreeRtos::delay_ms(300);
@@ -304,17 +330,15 @@ fn main() {
         if buttons.is_pressed(Button::C) {
             {
                 let fb_buf = framebuffer.as_mut();
-                let mut fb = FrameBuf::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+                let mut fb = FrameBuf::new(
+                    EndianCorrectedBuffer::new(fb_buf, EndianCorrection::ToBigEndian),
+                    DISPLAY_WIDTH,
+                    DISPLAY_HEIGHT,
+                );
                 fb.clear(Rgb565::BLACK).ok();
                 let _ = draw_center_message(&mut fb, "Rebooting...");
             }
-            if let Err(err) = display.set_pixels(
-                0,
-                0,
-                (DISPLAY_WIDTH - 1) as u16,
-                (DISPLAY_HEIGHT - 1) as u16,
-                framebuffer.iter().copied(),
-            ) {
+            if let Err(err) = display_interface.send_frame(framebuffer.as_ref()) {
                 println!("Display update failed: {err:?}");
             }
             FreeRtos::delay_ms(200);
@@ -352,10 +376,23 @@ fn main() {
         pressure_history[PRESSURE_HISTORY_LEN - 1] = pressure;
 
         state.session.update_pressure(pressure, now);
-        send_to_ble(&mut state, pressure);
+        state.bt_connected = ble_server.is_connected();
+        state.last_bt_send_successful = if state.bluetooth_on {
+            ble_server.notify_pressure(pressure).unwrap_or_else(|err| {
+                println!("BLE pressure notification failed: {err:?}");
+                false
+            })
+        } else {
+            false
+        };
 
         if let Ok(level) = read_battery_percentage(&mut i2c) {
             state.battery_percent = level.min(100);
+            if state.bluetooth_on {
+                if let Err(err) = ble_server.set_battery_level(state.battery_percent.into()) {
+                    println!("BLE battery update failed: {err:?}");
+                }
+            }
         }
 
         let shot_time_secs = state.session.current_shot_duration_ms(now) as f32 / 1_000.0;
@@ -380,20 +417,18 @@ fn main() {
 
         {
             let fb_buf = framebuffer.as_mut();
-            let mut fb = FrameBuf::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+            let mut fb = FrameBuf::new(
+                EndianCorrectedBuffer::new(fb_buf, EndianCorrection::ToBigEndian),
+                DISPLAY_WIDTH,
+                DISPLAY_HEIGHT,
+            );
             fb.clear(Rgb565::BLACK).ok();
             if let Err(err) = draw_main_screen(&mut fb, ui_data) {
                 println!("UI draw failed: {err:?}");
             }
         }
 
-        if let Err(err) = display.set_pixels(
-            0,
-            0,
-            (DISPLAY_WIDTH - 1) as u16,
-            (DISPLAY_HEIGHT - 1) as u16,
-            framebuffer.iter().copied(),
-        ) {
+        if let Err(err) = display_interface.send_frame(framebuffer.as_ref()) {
             println!("Display update failed: {err:?}");
         }
 
@@ -413,13 +448,12 @@ fn main() {
 }
 
 #[cfg(feature = "benchmark")]
-fn run_display_benchmarks<DI, RST>(
-    display: &mut mipidsi::Display<DI, ILI9342CRgb565, RST>,
+fn run_display_benchmarks<SPI, DC>(
+    display: &mut FastSpiInterface<'_, SPI, DC>,
     framebuffer: &mut [Rgb565; PIXEL_COUNT],
 ) where
-    DI: mipidsi::interface::Interface<Word = u8>,
-    DI::Error: core::fmt::Debug,
-    RST: embedded_hal::digital::OutputPin,
+    SPI: embedded_hal::spi::SpiDevice,
+    DC: embedded_hal::digital::OutputPin,
 {
     use benchmark::BenchmarkStats;
 
@@ -439,19 +473,16 @@ fn run_display_benchmarks<DI, RST>(
         } else {
             Rgb565::new(0, 0, 31)
         };
-        framebuffer.fill(color);
+        framebuffer.fill(
+            embedded_graphics::pixelcolor::raw::RawU16::new(color.into_storage().to_be()).into(),
+        );
         let started = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         display
-            .set_pixels(
-                0,
-                0,
-                (DISPLAY_WIDTH - 1) as u16,
-                (DISPLAY_HEIGHT - 1) as u16,
-                framebuffer.iter().copied(),
-            )
+            .send_frame(framebuffer)
             .expect("benchmark SPI transfer failed");
         let ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         spi_stats.record(ended.saturating_sub(started));
+        FreeRtos::delay_ms(1);
     }
     spi_stats.report(WARMUP);
 
@@ -486,23 +517,22 @@ fn run_display_benchmarks<DI, RST>(
         let frame_started = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         let render_started = frame_started;
         {
-            let mut fb = FrameBuf::new(&mut *framebuffer, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+            let mut fb = FrameBuf::new(
+                EndianCorrectedBuffer::new(framebuffer, EndianCorrection::ToBigEndian),
+                DISPLAY_WIDTH,
+                DISPLAY_HEIGHT,
+            );
             fb.clear(Rgb565::BLACK).ok();
             draw_main_screen(&mut fb, data).expect("benchmark render failed");
         }
         let render_ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         render_stats.record(render_ended.saturating_sub(render_started));
         display
-            .set_pixels(
-                0,
-                0,
-                (DISPLAY_WIDTH - 1) as u16,
-                (DISPLAY_HEIGHT - 1) as u16,
-                framebuffer.iter().copied(),
-            )
+            .send_frame(framebuffer)
             .expect("benchmark frame transfer failed");
         let frame_ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         frame_stats.record(frame_ended.saturating_sub(frame_started));
+        FreeRtos::delay_ms(1);
     }
     render_stats.report(WARMUP);
     frame_stats.report(WARMUP);

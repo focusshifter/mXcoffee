@@ -23,8 +23,7 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn new() -> Result<Self, EspError> {
-        let partition = EspDefaultNvsPartition::take()?;
+    pub fn new(partition: EspDefaultNvsPartition) -> Result<Self, EspError> {
         let nvs = EspNvs::new(partition, NAMESPACE, true)?;
         Ok(Self { nvs })
     }

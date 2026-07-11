@@ -18,7 +18,7 @@ debug = true    # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
 
 [features]
-default = []
+default = ["experimental"]
 
 experimental = ["esp-idf-svc/experimental"]
 benchmark = []
@@ -36,6 +36,7 @@ embedded-hal = "1.0.0"
 axp2101 = "0.1.0"
 heapless = "0.8"
 embedded-graphics-framebuf = "0.5"
+enumset = "1.1"
 
 [build-dependencies]
 embuild = { version = "0.33", features = ["espidf"] }
