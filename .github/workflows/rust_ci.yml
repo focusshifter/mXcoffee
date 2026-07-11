@@ -23,6 +23,8 @@ jobs:
         action:
           - command: build
             args: --release
+          - command: build
+            args: --release --features benchmark
           - command: fmt
             args: --all -- --check --color always
           - command: clippy
@@ -40,3 +42,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Run command
         run: cargo ${{ matrix.action.command }} ${{ matrix.action.args }}
+
+  host-tests:
+    name: Host parity tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Enable caching
+        uses: Swatinem/rust-cache@v2
+      - name: Run host tests
+        run: cargo test --lib --target x86_64-unknown-linux-gnu
