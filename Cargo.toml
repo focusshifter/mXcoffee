@@ -23,6 +23,7 @@ default = ["experimental"]
 
 experimental = ["esp-idf-svc/experimental"]
 benchmark = []
+benchmark-soak = ["benchmark"]
 
 [dependencies]
 embedded-graphics = "0.8.1"

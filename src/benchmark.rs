@@ -55,7 +55,7 @@ impl BenchmarkStats {
                 "\"samples\":{},\"warmup\":{},\"bytes_per_iteration\":{},",
                 "\"min_us\":{},\"median_us\":{},\"mean_us\":{},",
                 "\"p95_us\":{},\"p99_us\":{},\"max_us\":{},",
-                "\"fps\":{}.{:02},\"mib_per_sec\":{}.{:02}}}"
+                "\"fps\":{}.{:02},\"mib_per_sec\":{}.{:02},\"errors\":0}}"
             ),
             self.name,
             count,

@@ -7,6 +7,28 @@ use embedded_graphics::{
     primitives::Rectangle,
 };
 
+pub fn clear_black(pixels: &mut [Rgb565]) {
+    // Every RGB565 bit pattern is valid, and black is represented by zero.
+    unsafe { core::ptr::write_bytes(pixels.as_mut_ptr(), 0, pixels.len()) };
+}
+
+pub fn clear_black_rect(
+    pixels: &mut [Rgb565],
+    width: usize,
+    x: usize,
+    y: usize,
+    rect_width: usize,
+    rect_height: usize,
+) {
+    assert!(width > 0 && pixels.len() % width == 0);
+    let height = pixels.len() / width;
+    assert!(x + rect_width <= width && y + rect_height <= height);
+    for row in y..y + rect_height {
+        let start = row * width + x;
+        clear_black(&mut pixels[start..start + rect_width]);
+    }
+}
+
 pub struct FastFrameBuffer<'a> {
     pixels: &'a mut [Rgb565],
     width: usize,
@@ -108,5 +130,24 @@ mod tests {
         assert_eq!(pixels[1], Rgb565::GREEN);
         assert_eq!(pixels[2], Rgb565::BLACK);
         assert_eq!(pixels[11], Rgb565::RED);
+    }
+
+    #[test]
+    fn clears_framebuffer_with_zeroed_rgb565_pixels() {
+        let mut pixels = [Rgb565::WHITE; 16];
+        clear_black(&mut pixels);
+        assert!(pixels.iter().all(|pixel| *pixel == Rgb565::BLACK));
+    }
+
+    #[test]
+    fn clears_only_the_requested_rectangle() {
+        let mut pixels = [Rgb565::WHITE; 20];
+        clear_black_rect(&mut pixels, 5, 1, 1, 3, 2);
+        assert_eq!(pixels[0], Rgb565::WHITE);
+        assert_eq!(pixels[6], Rgb565::BLACK);
+        assert_eq!(pixels[8], Rgb565::BLACK);
+        assert_eq!(pixels[10], Rgb565::WHITE);
+        assert_eq!(pixels[13], Rgb565::BLACK);
+        assert_eq!(pixels[19], Rgb565::WHITE);
     }
 }

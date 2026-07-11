@@ -26,7 +26,7 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_sys::EspError;
 use mipidsi::options::{ColorInversion, ColorOrder};
 use mipidsi::{models::ILI9342CRgb565, Builder};
-use mxcoffee::fast_framebuffer::FastFrameBuffer;
+use mxcoffee::fast_framebuffer::{clear_black, clear_black_rect, FastFrameBuffer};
 use mxcoffee::session::SessionState;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError, TrySendError};
 
@@ -84,7 +84,7 @@ struct DeviceState {
     frame_counter: u32,
     last_battery_read_ms: u64,
     last_pressure_error_log_ms: u64,
-    pressure_retry_after_ms: u64,
+    pressure_available: bool,
 }
 
 impl DeviceState {
@@ -105,7 +105,7 @@ impl DeviceState {
             frame_counter: 0,
             last_battery_read_ms: 0,
             last_pressure_error_log_ms: 0,
-            pressure_retry_after_ms: 0,
+            pressure_available: true,
         }
     }
 
@@ -259,6 +259,8 @@ fn main() {
     let _ = ble_server.log(b"Rust firmware started");
 
     let pin_dc = esp_idf_hal::gpio::PinDriver::output(gpios.gpio15).unwrap();
+    let mut pin_cs = esp_idf_hal::gpio::PinDriver::output(gpios.gpio5).unwrap();
+    pin_cs.set_high().unwrap();
 
     let mut internal_i2c = I2cDriver::new(
         peripherals.i2c1,
@@ -309,12 +311,22 @@ fn main() {
         .duplex(Duplex::Half)
         .queue_size(2)
         .write_only(true);
-    let spi_device = SpiDeviceDriver::new(driver, Some(gpios.gpio5), &spi_device_config).unwrap();
+    let spi_device = SpiDeviceDriver::new(
+        driver,
+        None::<esp_idf_hal::gpio::AnyOutputPin>,
+        &spi_device_config,
+    )
+    .unwrap();
     let raw_spi_device = spi_device.device();
 
     let spi_buffer = Box::leak(Box::new([0u8; DISPLAY_TRANSFER_BUFFER_SIZE]));
-    let display_interface =
-        FastSpiInterface::new(spi_device, pin_dc, spi_buffer.as_mut(), raw_spi_device);
+    let display_interface = FastSpiInterface::new(
+        spi_device,
+        pin_dc,
+        pin_cs,
+        spi_buffer.as_mut(),
+        raw_spi_device,
+    );
 
     let display = Builder::new(ILI9342CRgb565, display_interface)
         .display_size(320, 240)
@@ -351,6 +363,7 @@ fn main() {
                     if available_tx.send(frame).is_err() {
                         break;
                     }
+                    FreeRtos::delay_ms(1);
                 }
                 Err(TryRecvError::Empty) => FreeRtos::delay_ms(1),
                 Err(TryRecvError::Disconnected) => break,
@@ -365,6 +378,22 @@ fn main() {
     ));
     #[cfg(feature = "benchmark")]
     let mut pipeline_samples = 0usize;
+    #[cfg(feature = "benchmark")]
+    let mut pipeline_update_stats =
+        Box::new(mxcoffee::benchmark::BenchmarkStats::new("frame_update", 0));
+    #[cfg(feature = "benchmark")]
+    let mut pipeline_render_stats =
+        Box::new(mxcoffee::benchmark::BenchmarkStats::new("frame_render", 0));
+    #[cfg(feature = "benchmark")]
+    let mut pipeline_clear_stats =
+        Box::new(mxcoffee::benchmark::BenchmarkStats::new("frame_clear", 0));
+    #[cfg(feature = "benchmark")]
+    let mut pipeline_ui_stats = Box::new(mxcoffee::benchmark::BenchmarkStats::new("frame_ui", 0));
+    #[cfg(feature = "benchmark")]
+    let mut pipeline_exchange_stats = Box::new(mxcoffee::benchmark::BenchmarkStats::new(
+        "frame_exchange",
+        PIXEL_COUNT * 2,
+    ));
 
     loop {
         #[cfg(feature = "benchmark")]
@@ -413,7 +442,7 @@ fn main() {
             };
             {
                 let fb_buf = framebuffer.as_mut();
-                fb_buf.fill(Rgb565::BLACK);
+                clear_black(fb_buf);
                 let mut fb = FastFrameBuffer::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
                 let _ = draw_center_message(&mut fb, message);
             }
@@ -426,7 +455,7 @@ fn main() {
         if buttons.is_pressed(Button::C) {
             {
                 let fb_buf = framebuffer.as_mut();
-                fb_buf.fill(Rgb565::BLACK);
+                clear_black(fb_buf);
                 let mut fb = FastFrameBuffer::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
                 let _ = draw_center_message(&mut fb, "Rebooting...");
             }
@@ -449,7 +478,7 @@ fn main() {
         state.last_refresh_ms = now;
         state.frame_indicator = !state.frame_indicator;
 
-        let pressure = if now < state.pressure_retry_after_ms {
+        let pressure = if !state.pressure_available {
             state.last_pressure.unwrap_or(0)
         } else {
             match pressure_sensor.read_pressure_mbar(&mut pressure_i2c) {
@@ -459,7 +488,7 @@ fn main() {
                         println!("Pressure read failed: {err:?}");
                         state.last_pressure_error_log_ms = now;
                     }
-                    state.pressure_retry_after_ms = now.saturating_add(5_000);
+                    state.pressure_available = false;
                     state.last_pressure.unwrap_or(0)
                 }
             }
@@ -516,16 +545,33 @@ fn main() {
             frame_indicator: state.frame_indicator,
         };
 
+        #[cfg(feature = "benchmark")]
+        let render_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         {
             let fb_buf = framebuffer.as_mut();
-            fb_buf.fill(Rgb565::BLACK);
+            clear_black_rect(fb_buf, DISPLAY_WIDTH, 0, 45, 275, 195);
+            clear_black_rect(fb_buf, DISPLAY_WIDTH, 35, 0, 105, 30);
+            clear_black_rect(fb_buf, DISPLAY_WIDTH, 205, 0, 65, 30);
+            clear_black_rect(fb_buf, DISPLAY_WIDTH, 275, 0, 45, 40);
+            #[cfg(feature = "benchmark")]
+            let clear_ended_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
             let mut fb = FastFrameBuffer::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
             if let Err(err) = draw_main_screen(&mut fb, ui_data) {
                 println!("UI draw failed: {err:?}");
             }
+            #[cfg(feature = "benchmark")]
+            {
+                pipeline_clear_stats.record(clear_ended_us.saturating_sub(render_started_us));
+                let ui_ended_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+                pipeline_ui_stats.record(ui_ended_us.saturating_sub(clear_ended_us));
+            }
         }
+        #[cfg(feature = "benchmark")]
+        let exchange_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
 
         framebuffer = exchange_frame(&frame_tx, &available_rx, framebuffer);
+        #[cfg(feature = "benchmark")]
+        let exchange_ended_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
 
         let frame_end = now_ms();
         let frame_duration = frame_end.saturating_sub(frame_start);
@@ -544,11 +590,18 @@ fn main() {
 
         #[cfg(feature = "benchmark")]
         if pipeline_samples < 105 {
-            let pipeline_ended_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
-            pipeline_stats.record(pipeline_ended_us.saturating_sub(pipeline_started_us));
+            pipeline_stats.record(exchange_ended_us.saturating_sub(pipeline_started_us));
+            pipeline_update_stats.record(render_started_us.saturating_sub(pipeline_started_us));
+            pipeline_render_stats.record(exchange_started_us.saturating_sub(render_started_us));
+            pipeline_exchange_stats.record(exchange_ended_us.saturating_sub(exchange_started_us));
             pipeline_samples += 1;
             if pipeline_samples == 105 {
                 pipeline_stats.report(5);
+                pipeline_update_stats.report(5);
+                pipeline_render_stats.report(5);
+                pipeline_clear_stats.report(5);
+                pipeline_ui_stats.report(5);
+                pipeline_exchange_stats.report(5);
             }
         }
 
@@ -557,12 +610,13 @@ fn main() {
 }
 
 #[cfg(feature = "benchmark")]
-fn run_display_benchmarks<SPI, DC>(
-    display: &mut FastSpiInterface<'_, SPI, DC>,
+fn run_display_benchmarks<SPI, DC, CS>(
+    display: &mut FastSpiInterface<'_, SPI, DC, CS>,
     framebuffer: &mut [Rgb565; PIXEL_COUNT],
 ) where
     SPI: embedded_hal::spi::SpiDevice<Error = esp_idf_hal::spi::SpiError>,
     DC: embedded_hal::digital::OutputPin,
+    CS: embedded_hal::digital::OutputPin<Error = DC::Error>,
 {
     use mxcoffee::benchmark::BenchmarkStats;
 
@@ -571,8 +625,21 @@ fn run_display_benchmarks<SPI, DC>(
     const FRAME_BYTES: usize = PIXEL_COUNT * 2;
 
     println!(
-        "{{\"type\":\"benchmark_config\",\"spi_hz\":{},\"transfer_buffer\":{},\"dma\":true,\"width\":{},\"height\":{}}}",
-        DISPLAY_SPI_HZ, DISPLAY_TRANSFER_BUFFER_SIZE, DISPLAY_WIDTH, DISPLAY_HEIGHT
+        concat!(
+            "{{\"type\":\"benchmark_config\",",
+            "\"backend\":\"spi2_raw_lldesc_ping_pong\",\"backend_version\":1,",
+            "\"cpu_hz\":240000000,\"spi_hz\":{},",
+            "\"framebuffer_external\":{},\"framebuffer_bytes\":{},",
+            "\"transfer_buffer\":{},\"transfer_buffers\":2,",
+            "\"staging_dma_capable\":true,\"warmup\":5,\"samples\":100,",
+            "\"width\":{},\"height\":{}}}"
+        ),
+        DISPLAY_SPI_HZ,
+        unsafe { esp_idf_sys::esp_ptr_external_ram(framebuffer.as_ptr().cast()) },
+        FRAME_BYTES,
+        DISPLAY_TRANSFER_BUFFER_SIZE,
+        DISPLAY_WIDTH,
+        DISPLAY_HEIGHT
     );
 
     let mut spi_stats = Box::new(BenchmarkStats::new("spi_alternating_frame", FRAME_BYTES));
@@ -592,6 +659,55 @@ fn run_display_benchmarks<SPI, DC>(
         FreeRtos::delay_ms(1);
     }
     spi_stats.report(WARMUP);
+
+    for (index, pixel) in framebuffer.iter_mut().enumerate() {
+        let x = index % DISPLAY_WIDTH;
+        let y = index / DISPLAY_WIDTH;
+        *pixel = match (x >= DISPLAY_WIDTH / 2, y >= DISPLAY_HEIGHT / 2) {
+            (false, false) => Rgb565::RED,
+            (true, false) => Rgb565::GREEN,
+            (false, true) => Rgb565::BLUE,
+            (true, true) => Rgb565::WHITE,
+        };
+    }
+    display
+        .send_frame_queued(framebuffer)
+        .expect("RGB test pattern transfer failed");
+    println!("{{\"type\":\"correctness\",\"name\":\"rgb_quadrants\",\"errors\":0}}");
+    FreeRtos::delay_ms(3_000);
+
+    for (index, pixel) in framebuffer.iter_mut().enumerate() {
+        let x = index % DISPLAY_WIDTH;
+        let y = index / DISPLAY_WIDTH;
+        *pixel = if ((x / 8) + (y / 8)) % 2 == 0 {
+            Rgb565::WHITE
+        } else {
+            Rgb565::BLACK
+        };
+    }
+    display
+        .send_frame_queued(framebuffer)
+        .expect("checkerboard transfer failed");
+    println!("{{\"type\":\"correctness\",\"name\":\"checkerboard_8px\",\"errors\":0}}");
+    FreeRtos::delay_ms(3_000);
+
+    #[cfg(feature = "benchmark-soak")]
+    {
+        for iteration in 0..1_000 {
+            framebuffer.fill(if iteration % 2 == 0 {
+                Rgb565::RED
+            } else {
+                Rgb565::BLUE
+            });
+            display
+                .send_frame_queued(framebuffer)
+                .expect("1,000-frame transfer soak failed");
+            FreeRtos::delay_ms(1);
+        }
+        println!(
+            "{{\"type\":\"correctness\",\"name\":\"spi_1000_uploads\",\"iterations\":1000,\"errors\":0}}"
+        );
+    }
 
     let mut history = [0i16; PRESSURE_HISTORY_LEN];
     for (index, value) in history.iter_mut().enumerate() {
@@ -624,7 +740,7 @@ fn run_display_benchmarks<SPI, DC>(
         let frame_started = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         let render_started = frame_started;
         {
-            framebuffer.fill(Rgb565::BLACK);
+            clear_black(framebuffer);
             let mut fb = FastFrameBuffer::new(&mut *framebuffer, DISPLAY_WIDTH, DISPLAY_HEIGHT);
             draw_main_screen(&mut fb, data).expect("benchmark render failed");
         }
