@@ -37,6 +37,15 @@ impl Default for SessionState {
 }
 
 impl SessionState {
+    pub fn current_shot_duration_ms(&self, now_ms: u64) -> u64 {
+        if self.timer_running {
+            self.shot_total_ms
+                .saturating_add(now_ms.saturating_sub(self.timer_start_ms))
+        } else {
+            self.shot_total_ms
+        }
+    }
+
     pub fn update_pressure(&mut self, pressure_mbar: i16, now_ms: u64) {
         if pressure_mbar > SHOT_PRESSURE_THRESHOLD_MBAR {
             if !self.timer_running {
@@ -131,6 +140,14 @@ mod tests {
         let mut state = SessionState::default();
         state.update_pressure(SHOT_PRESSURE_THRESHOLD_MBAR, 100);
         assert!(!state.timer_running);
+    }
+
+    #[test]
+    fn reports_in_progress_duration_without_mutating_accumulator() {
+        let mut state = SessionState::default();
+        state.update_pressure(8_000, 100);
+        assert_eq!(state.current_shot_duration_ms(350), 250);
+        assert_eq!(state.shot_total_ms, 0);
     }
 
     #[test]

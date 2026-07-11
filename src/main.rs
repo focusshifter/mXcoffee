@@ -25,6 +25,7 @@ use esp_idf_sys::EspError;
 use mipidsi::interface::SpiInterface;
 use mipidsi::options::{ColorInversion, ColorOrder};
 use mipidsi::{models::ILI9342CRgb565, Builder};
+use mxcoffee::session::SessionState;
 
 const AXP2101_ADDR: u8 = 0x34;
 const DISPLAY_WIDTH: usize = 320;
@@ -45,9 +46,7 @@ struct DeviceState {
     last_refresh_ms: u64,
     last_activity_ms: u64,
     last_pressure: Option<i16>,
-    timer_running: bool,
-    timer_start_ms: u64,
-    shot_total_ms: u64,
+    session: SessionState,
     battery_percent: u8,
     frame_indicator: bool,
     frame_accum_ms: u64,
@@ -65,9 +64,7 @@ impl DeviceState {
             last_refresh_ms: now_ms,
             last_activity_ms: now_ms,
             last_pressure: None,
-            timer_running: false,
-            timer_start_ms: now_ms,
-            shot_total_ms: 0,
+            session: SessionState::default(),
             battery_percent: 100,
             frame_indicator: false,
             frame_accum_ms: 0,
@@ -77,29 +74,6 @@ impl DeviceState {
 
     fn record_activity(&mut self, timestamp_ms: u64) {
         self.last_activity_ms = timestamp_ms;
-    }
-
-    fn update_timer(&mut self, pressure: i16, now_ms: u64) {
-        if pressure > 1_000 {
-            if !self.timer_running {
-                self.timer_running = true;
-                self.timer_start_ms = now_ms;
-            } else {
-                self.shot_total_ms += now_ms.saturating_sub(self.timer_start_ms);
-                self.timer_start_ms = now_ms;
-            }
-        } else if self.timer_running {
-            self.shot_total_ms += now_ms.saturating_sub(self.timer_start_ms);
-            self.timer_running = false;
-        }
-    }
-
-    fn current_shot_duration(&self, now_ms: u64) -> u64 {
-        if self.timer_running {
-            self.shot_total_ms + now_ms.saturating_sub(self.timer_start_ms)
-        } else {
-            self.shot_total_ms
-        }
     }
 }
 
@@ -358,14 +332,14 @@ fn main() {
         pressure_history.rotate_left(1);
         pressure_history[PRESSURE_HISTORY_LEN - 1] = pressure;
 
-        state.update_timer(pressure, now);
+        state.session.update_pressure(pressure, now);
         send_to_ble(&mut state, pressure);
 
         if let Ok(level) = read_battery_percentage(&mut i2c) {
             state.battery_percent = level.min(100);
         }
 
-        let shot_time_secs = state.current_shot_duration(now) as f32 / 1_000.0;
+        let shot_time_secs = state.session.current_shot_duration_ms(now) as f32 / 1_000.0;
 
         let ui_data = UiData {
             pressure_history: &pressure_history,
@@ -381,7 +355,7 @@ fn main() {
             last_activity_ms: state.last_activity_ms,
             now_ms: now,
             auto_off_timeout_ms: AUTO_OFF_TIMEOUT_MS,
-            timer_running: state.timer_running,
+            timer_running: state.session.timer_running,
             frame_indicator: state.frame_indicator,
         };
 
