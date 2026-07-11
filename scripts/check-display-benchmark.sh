@@ -42,4 +42,27 @@ jq -e '
   exit 1
 }
 
+if jq -e '.psram_hz == 80000000' <<<"$config" >/dev/null; then
+  cadence=$(jq -sc 'map(select(.type == "benchmark" and .name == "display_worker_cadence")) | last' "$result_file")
+  jq -e '
+    .samples >= 100 and
+    .warmup >= 5 and
+    .median_us <= 40000 and
+    .fps >= 25 and
+    .errors == 0
+  ' <<<"$cadence" >/dev/null || {
+    echo "completed display cadence failed" >&2
+    jq '{name, samples, warmup, median_us, p95_us, p99_us, fps, errors}' <<<"$cadence" >&2
+    exit 1
+  }
+
+  jq -se '
+    map(select(.type == "correctness" and .name == "spi_1000_uploads")) |
+    last | .iterations == 1000 and .errors == 0
+  ' "$result_file" >/dev/null || {
+    echo "missing or failed 1000-upload soak" >&2
+    exit 1
+  }
+fi
+
 echo "display benchmark passed"

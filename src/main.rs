@@ -38,7 +38,7 @@ const PRESSURE_HISTORY_LEN: usize = 160;
 const AUTO_OFF_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 const REFRESH_INTERVAL_MS: u64 = 20;
 const DISPLAY_SPI_HZ: u32 = 40_000_000;
-const DISPLAY_TRANSFER_BUFFER_SIZE: usize = 16 * 1024;
+const DISPLAY_TRANSFER_BUFFER_SIZE: usize = 8 * 1024;
 type OwnedFrameBuffer = Box<[Rgb565; PIXEL_COUNT]>;
 
 fn exchange_frame(
@@ -346,27 +346,71 @@ fn main() {
     #[cfg(feature = "benchmark")]
     run_display_benchmarks(&mut display_interface, framebuffer.as_mut());
 
-    let (frame_tx, frame_rx) = sync_channel::<OwnedFrameBuffer>(1);
-    let (available_tx, available_rx) = sync_channel::<OwnedFrameBuffer>(2);
-    available_tx
-        .send(Box::new([Rgb565::BLACK; PIXEL_COUNT]))
-        .expect("failed to seed display framebuffer pool");
+    let (frame_tx, frame_rx) = sync_channel::<OwnedFrameBuffer>(2);
+    let (available_tx, available_rx) = sync_channel::<OwnedFrameBuffer>(3);
+    for _ in 0..2 {
+        available_tx
+            .send(Box::new([Rgb565::BLACK; PIXEL_COUNT]))
+            .expect("failed to seed display framebuffer pool");
+    }
     std::thread::Builder::new()
         .name("display".into())
         .stack_size(8 * 1024)
-        .spawn(move || loop {
-            match frame_rx.try_recv() {
-                Ok(frame) => {
-                    if let Err(err) = display_interface.send_frame_queued(frame.as_ref()) {
-                        println!("Display update failed: {err:?}");
+        .spawn(move || {
+            #[cfg(feature = "benchmark")]
+            let mut upload_stats = Box::new(mxcoffee::benchmark::BenchmarkStats::new(
+                "display_worker_upload",
+                PIXEL_COUNT * 2,
+            ));
+            #[cfg(feature = "benchmark")]
+            let mut cadence_stats = Box::new(mxcoffee::benchmark::BenchmarkStats::new(
+                "display_worker_cadence",
+                PIXEL_COUNT * 2,
+            ));
+            #[cfg(feature = "benchmark")]
+            let mut completed_frames = 0usize;
+            #[cfg(feature = "benchmark")]
+            let mut last_completion_us = None;
+            let mut frames_until_pause = 4u8;
+
+            loop {
+                match frame_rx.try_recv() {
+                    Ok(frame) => {
+                        #[cfg(feature = "benchmark")]
+                        let upload_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+                        if let Err(err) = display_interface.send_frame_queued(frame.as_ref()) {
+                            println!("Display update failed: {err:?}");
+                        }
+                        #[cfg(feature = "benchmark")]
+                        {
+                            let completed_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+                            if completed_frames < 105 {
+                                upload_stats.record(completed_us.saturating_sub(upload_started_us));
+                            }
+                            if let Some(previous_us) = last_completion_us {
+                                if completed_frames <= 105 {
+                                    cadence_stats.record(completed_us.saturating_sub(previous_us));
+                                }
+                            }
+                            last_completion_us = Some(completed_us);
+                            completed_frames += 1;
+                            if completed_frames == 106 {
+                                upload_stats.report(5);
+                                cadence_stats.report(5);
+                            }
+                        }
+                        if available_tx.send(frame).is_err() {
+                            break;
+                        }
+                        frames_until_pause -= 1;
+                        if frames_until_pause == 0 {
+                            FreeRtos::delay_ms(1);
+                            frames_until_pause = 4;
+                        }
                     }
-                    if available_tx.send(frame).is_err() {
-                        break;
-                    }
-                    FreeRtos::delay_ms(1);
+                    Err(TryRecvError::Empty) => FreeRtos::delay_ms(1),
+                    Err(TryRecvError::Disconnected) => break,
                 }
-                Err(TryRecvError::Empty) => FreeRtos::delay_ms(1),
-                Err(TryRecvError::Disconnected) => break,
             }
         })
         .expect("failed to start display worker");
@@ -628,9 +672,10 @@ fn run_display_benchmarks<SPI, DC, CS>(
         concat!(
             "{{\"type\":\"benchmark_config\",",
             "\"backend\":\"spi2_raw_lldesc_ping_pong\",\"backend_version\":1,",
-            "\"cpu_hz\":240000000,\"spi_hz\":{},",
+            "\"cpu_hz\":240000000,\"spi_hz\":{},\"psram_hz\":80000000,",
             "\"framebuffer_external\":{},\"framebuffer_bytes\":{},",
             "\"transfer_buffer\":{},\"transfer_buffers\":2,",
+            "\"framebuffer_count\":3,\"queued_frames\":2,\"display_pause_every\":4,",
             "\"staging_dma_capable\":true,\"warmup\":5,\"samples\":100,",
             "\"width\":{},\"height\":{}}}"
         ),

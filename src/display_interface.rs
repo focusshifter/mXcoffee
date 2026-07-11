@@ -1,3 +1,12 @@
+//! Pure-Rust ESP32 SPI-DMA display transport.
+//!
+//! The transaction, descriptor, and DMA reset sequence is source-derived from
+//! M5GFX 0.2.0 `Bus_SPI.cpp` (M5Stack, MIT) and its upstream LovyanGFX
+//! implementation (FreeBSD). Neither C++ library is compiled or linked.
+//! <https://github.com/m5stack/M5GFX/blob/0.2.0/src/lgfx/v1/platforms/esp32/Bus_SPI.cpp>
+//! <https://github.com/m5stack/M5GFX/blob/0.2.0/LICENSE>
+//! <https://github.com/lovyan03/LovyanGFX/blob/master/license.txt>
+
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_hal::{digital::OutputPin, spi::SpiDevice};
 use esp_idf_hal::spi::SpiError as HalSpiError;
