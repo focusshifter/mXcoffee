@@ -28,7 +28,7 @@ pub struct UiData<'a> {
     pub battery_percent: u8,
     pub bluetooth_on: bool,
     pub bt_send_success: bool,
-    pub shot_time_secs: f32,
+    pub shot_time_tenths: u64,
     pub pressure_hex: &'a str,
     pub debug_mode: bool,
     pub last_refresh_ms: u64,
@@ -140,7 +140,13 @@ where
     // Pressure numeric display
     let pressure_style = MonoTextStyle::new(&FONT_9X18_BOLD, graph_color);
     let mut pressure_text: String<8> = String::new();
-    write!(&mut pressure_text, "{:.1}", last_pressure as f32 / 1000.0).ok();
+    write!(
+        &mut pressure_text,
+        "{}.{:01}",
+        last_pressure / 1000,
+        (last_pressure % 1000) / 100
+    )
+    .ok();
     let _ = Text::with_alignment(
         &pressure_text,
         Point::new(260, 10),
@@ -152,7 +158,13 @@ where
     // Shot timer
     let timer_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
     let mut timer_text: String<16> = String::new();
-    write!(&mut timer_text, "{:.1}s", data.shot_time_secs).ok();
+    write!(
+        &mut timer_text,
+        "{}.{:01}s",
+        data.shot_time_tenths / 10,
+        data.shot_time_tenths % 10
+    )
+    .ok();
     let _ = Text::with_alignment(
         &timer_text,
         Point::new(130, 10),
@@ -218,7 +230,6 @@ pub fn draw_center_message<T>(target: &mut T, text: &str) -> Result<(), T::Error
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    target.clear(Rgb565::BLACK)?;
     let style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
     Text::with_alignment(
         text,
@@ -252,8 +263,9 @@ where
     buffer.clear();
     write!(
         &mut buffer,
-        "Pressure: {:.3} bar",
-        data.last_pressure as f32 / 1000.0
+        "Pressure: {}.{:03} bar",
+        data.last_pressure / 1000,
+        data.last_pressure % 1000
     )
     .ok();
     let _ = Text::new(&buffer, Point::new(40, y), style).draw(target)?;
@@ -262,13 +274,14 @@ where
     buffer.clear();
     write!(
         &mut buffer,
-        "Shot timer: {} ({:.1}s)",
+        "Shot timer: {} ({}.{:01}s)",
         if data.timer_running {
             "running"
         } else {
             "paused"
         },
-        data.shot_time_secs
+        data.shot_time_tenths / 10,
+        data.shot_time_tenths % 10
     )
     .ok();
     let _ = Text::new(&buffer, Point::new(40, y), style).draw(target)?;

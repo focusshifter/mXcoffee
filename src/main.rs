@@ -14,13 +14,7 @@ use display_interface::FastSpiInterface;
 
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
-use embedded_graphics::prelude::*;
-use embedded_graphics_framebuf::{
-    backends::{EndianCorrectedBuffer, EndianCorrection},
-    FrameBuf,
-};
 use esp_idf_hal::delay::{FreeRtos, TickType};
-use esp_idf_hal::gpio::PinDriver;
 use esp_idf_hal::i2c::{I2cConfig, I2cDriver};
 use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::prelude::*;
@@ -32,7 +26,9 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_sys::EspError;
 use mipidsi::options::{ColorInversion, ColorOrder};
 use mipidsi::{models::ILI9342CRgb565, Builder};
+use mxcoffee::fast_framebuffer::FastFrameBuffer;
 use mxcoffee::session::SessionState;
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError, TrySendError};
 
 const AXP2101_ADDR: u8 = 0x34;
 const DISPLAY_WIDTH: usize = 320;
@@ -43,6 +39,34 @@ const AUTO_OFF_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
 const REFRESH_INTERVAL_MS: u64 = 20;
 const DISPLAY_SPI_HZ: u32 = 40_000_000;
 const DISPLAY_TRANSFER_BUFFER_SIZE: usize = 16 * 1024;
+type OwnedFrameBuffer = Box<[Rgb565; PIXEL_COUNT]>;
+
+fn exchange_frame(
+    frame_tx: &SyncSender<OwnedFrameBuffer>,
+    available_rx: &Receiver<OwnedFrameBuffer>,
+    mut frame: OwnedFrameBuffer,
+) -> OwnedFrameBuffer {
+    loop {
+        match frame_tx.try_send(frame) {
+            Ok(()) => break,
+            Err(TrySendError::Full(returned)) => {
+                frame = returned;
+                FreeRtos::delay_ms(1);
+            }
+            Err(TrySendError::Disconnected(_)) => panic!("display worker stopped unexpectedly"),
+        }
+    }
+
+    loop {
+        match available_rx.try_recv() {
+            Ok(available) => return available,
+            Err(TryRecvError::Empty) => FreeRtos::delay_ms(1),
+            Err(TryRecvError::Disconnected) => {
+                panic!("display worker dropped framebuffer pool")
+            }
+        }
+    }
+}
 
 struct DeviceState {
     is_asleep: bool,
@@ -58,6 +82,9 @@ struct DeviceState {
     frame_indicator: bool,
     frame_accum_ms: u64,
     frame_counter: u32,
+    last_battery_read_ms: u64,
+    last_pressure_error_log_ms: u64,
+    pressure_retry_after_ms: u64,
 }
 
 impl DeviceState {
@@ -76,6 +103,9 @@ impl DeviceState {
             frame_indicator: false,
             frame_accum_ms: 0,
             frame_counter: 0,
+            last_battery_read_ms: 0,
+            last_pressure_error_log_ms: 0,
+            pressure_retry_after_ms: 0,
         }
     }
 
@@ -138,6 +168,21 @@ fn configure_core2_power(i2c: &mut I2cDriver<'_>) -> Result<(), EspError> {
         )
     }
 
+    fn clear_reg(i2c: &mut I2cDriver<'_>, reg: u8, clear_mask: u8) -> Result<(), EspError> {
+        let mut current = [0u8; 1];
+        i2c.write_read(
+            AXP2101_ADDR,
+            &[reg],
+            &mut current,
+            TickType::new_millis(10).ticks(),
+        )?;
+        i2c.write(
+            AXP2101_ADDR,
+            &[reg, current[0] & !clear_mask],
+            TickType::new_millis(10).ticks(),
+        )
+    }
+
     fn ldo_voltage_to_reg(voltage_mv: u16) -> u8 {
         let clamped = voltage_mv.clamp(500, 3_500);
         ((clamped - 500) / 100) as u8
@@ -164,9 +209,33 @@ fn configure_core2_power(i2c: &mut I2cDriver<'_>) -> Result<(), EspError> {
     write_reg(i2c, REG_ALDO2_VOLTAGE, ldo_voltage_to_reg(3_300))?;
     write_reg(i2c, REG_ALDO4_VOLTAGE, ldo_voltage_to_reg(3_300))?;
     write_reg(i2c, REG_BLDO1_VOLTAGE, ldo_voltage_to_reg(3_300))?;
+    clear_reg(i2c, REG_LDO_CTRL, ALDO2_MASK)?;
+    FreeRtos::delay_ms(2);
     modify_reg(i2c, REG_LDO_CTRL, ALDO2_MASK | ALDO4_MASK | BLDO1_MASK)?;
 
     Ok(())
+}
+
+fn set_core2_backlight(i2c: &mut I2cDriver<'_>, enabled: bool) -> Result<(), EspError> {
+    const REG_LDO_CTRL: u8 = 0x90;
+    const BLDO1_MASK: u8 = 1 << 4;
+    let mut current = [0u8; 1];
+    i2c.write_read(
+        AXP2101_ADDR,
+        &[REG_LDO_CTRL],
+        &mut current,
+        TickType::new_millis(10).ticks(),
+    )?;
+    let value = if enabled {
+        current[0] | BLDO1_MASK
+    } else {
+        current[0] & !BLDO1_MASK
+    };
+    i2c.write(
+        AXP2101_ADDR,
+        &[REG_LDO_CTRL, value],
+        TickType::new_millis(10).ticks(),
+    )
 }
 
 fn main() {
@@ -189,11 +258,10 @@ fn main() {
         .expect("BLE initialization failed");
     let _ = ble_server.log(b"Rust firmware started");
 
-    let pin_dc = PinDriver::output(gpios.gpio15).unwrap();
-    let mut lcd_reset_pin = PinDriver::output(gpios.gpio33).unwrap();
+    let pin_dc = esp_idf_hal::gpio::PinDriver::output(gpios.gpio15).unwrap();
 
-    let mut i2c = I2cDriver::new(
-        peripherals.i2c0,
+    let mut internal_i2c = I2cDriver::new(
+        peripherals.i2c1,
         gpios.gpio21,
         gpios.gpio22,
         &I2cConfig::new().baudrate(400_000.Hz()),
@@ -202,7 +270,7 @@ fn main() {
 
     let mut power_configured = false;
     for _ in 0..3 {
-        match configure_core2_power(&mut i2c) {
+        match configure_core2_power(&mut internal_i2c) {
             Ok(()) => {
                 power_configured = true;
                 break;
@@ -218,13 +286,13 @@ fn main() {
         "Failed to configure AXP2101 after retries"
     );
 
-    let mut pin_lcd_blk = PinDriver::output(gpios.gpio32).unwrap();
-    pin_lcd_blk.set_high().ok();
-
-    lcd_reset_pin.set_low().unwrap();
-    FreeRtos::delay_ms(100);
-    lcd_reset_pin.set_high().unwrap();
-    FreeRtos::delay_ms(2000);
+    let mut pressure_i2c = I2cDriver::new(
+        peripherals.i2c0,
+        gpios.gpio33,
+        gpios.gpio32,
+        &I2cConfig::new().baudrate(400_000.Hz()),
+    )
+    .unwrap();
 
     let spi = peripherals.spi2;
     let driver = SpiDriver::new::<SPI2>(
@@ -239,17 +307,19 @@ fn main() {
     let spi_device_config = config::Config::new()
         .baudrate(DISPLAY_SPI_HZ.Hz())
         .duplex(Duplex::Half)
+        .queue_size(2)
         .write_only(true);
     let spi_device = SpiDeviceDriver::new(driver, Some(gpios.gpio5), &spi_device_config).unwrap();
+    let raw_spi_device = spi_device.device();
 
-    let mut spi_buffer = Box::new([0u8; DISPLAY_TRANSFER_BUFFER_SIZE]);
-    let display_interface = FastSpiInterface::new(spi_device, pin_dc, spi_buffer.as_mut());
+    let spi_buffer = Box::leak(Box::new([0u8; DISPLAY_TRANSFER_BUFFER_SIZE]));
+    let display_interface =
+        FastSpiInterface::new(spi_device, pin_dc, spi_buffer.as_mut(), raw_spi_device);
 
     let display = Builder::new(ILI9342CRgb565, display_interface)
         .display_size(320, 240)
         .color_order(ColorOrder::Bgr)
         .invert_colors(ColorInversion::Inverted)
-        .reset_pin(lcd_reset_pin)
         .init(&mut FreeRtos)
         .unwrap();
     let (mut display_interface, _, _) = display.release();
@@ -264,18 +334,52 @@ fn main() {
     #[cfg(feature = "benchmark")]
     run_display_benchmarks(&mut display_interface, framebuffer.as_mut());
 
+    let (frame_tx, frame_rx) = sync_channel::<OwnedFrameBuffer>(1);
+    let (available_tx, available_rx) = sync_channel::<OwnedFrameBuffer>(2);
+    available_tx
+        .send(Box::new([Rgb565::BLACK; PIXEL_COUNT]))
+        .expect("failed to seed display framebuffer pool");
+    std::thread::Builder::new()
+        .name("display".into())
+        .stack_size(8 * 1024)
+        .spawn(move || loop {
+            match frame_rx.try_recv() {
+                Ok(frame) => {
+                    if let Err(err) = display_interface.send_frame_queued(frame.as_ref()) {
+                        println!("Display update failed: {err:?}");
+                    }
+                    if available_tx.send(frame).is_err() {
+                        break;
+                    }
+                }
+                Err(TryRecvError::Empty) => FreeRtos::delay_ms(1),
+                Err(TryRecvError::Disconnected) => break,
+            }
+        })
+        .expect("failed to start display worker");
+
+    #[cfg(feature = "benchmark")]
+    let mut pipeline_stats = Box::new(mxcoffee::benchmark::BenchmarkStats::new(
+        "frame_dynamic_pipelined",
+        PIXEL_COUNT * 2,
+    ));
+    #[cfg(feature = "benchmark")]
+    let mut pipeline_samples = 0usize;
+
     loop {
+        #[cfg(feature = "benchmark")]
+        let pipeline_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         let now = now_ms();
         let frame_start = now;
 
-        let buttons = touch_buttons.poll(&mut i2c).unwrap_or_default();
+        let buttons = touch_buttons.poll(&mut internal_i2c).unwrap_or_default();
         if buttons.any_pressed() {
             state.record_activity(now);
         }
 
         if state.is_asleep {
             if buttons.any_pressed() {
-                pin_lcd_blk.set_high().ok();
+                set_core2_backlight(&mut internal_i2c, true).ok();
                 state.is_asleep = false;
                 state.last_refresh_ms = 0;
                 continue;
@@ -309,17 +413,11 @@ fn main() {
             };
             {
                 let fb_buf = framebuffer.as_mut();
-                let mut fb = FrameBuf::new(
-                    EndianCorrectedBuffer::new(fb_buf, EndianCorrection::ToBigEndian),
-                    DISPLAY_WIDTH,
-                    DISPLAY_HEIGHT,
-                );
-                fb.clear(Rgb565::BLACK).ok();
+                fb_buf.fill(Rgb565::BLACK);
+                let mut fb = FastFrameBuffer::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
                 let _ = draw_center_message(&mut fb, message);
             }
-            if let Err(err) = display_interface.send_frame(framebuffer.as_ref()) {
-                println!("Display update failed: {err:?}");
-            }
+            framebuffer = exchange_frame(&frame_tx, &available_rx, framebuffer);
             FreeRtos::delay_ms(300);
             state.last_refresh_ms = 0;
             continue;
@@ -328,23 +426,17 @@ fn main() {
         if buttons.is_pressed(Button::C) {
             {
                 let fb_buf = framebuffer.as_mut();
-                let mut fb = FrameBuf::new(
-                    EndianCorrectedBuffer::new(fb_buf, EndianCorrection::ToBigEndian),
-                    DISPLAY_WIDTH,
-                    DISPLAY_HEIGHT,
-                );
-                fb.clear(Rgb565::BLACK).ok();
+                fb_buf.fill(Rgb565::BLACK);
+                let mut fb = FastFrameBuffer::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
                 let _ = draw_center_message(&mut fb, "Rebooting...");
             }
-            if let Err(err) = display_interface.send_frame(framebuffer.as_ref()) {
-                println!("Display update failed: {err:?}");
-            }
+            let _ = exchange_frame(&frame_tx, &available_rx, framebuffer);
             FreeRtos::delay_ms(200);
             unsafe { esp_idf_sys::esp_restart() };
         }
 
         if !state.is_asleep && now.saturating_sub(state.last_activity_ms) >= AUTO_OFF_TIMEOUT_MS {
-            pin_lcd_blk.set_low().ok();
+            set_core2_backlight(&mut internal_i2c, false).ok();
             state.is_asleep = true;
             continue;
         }
@@ -357,11 +449,19 @@ fn main() {
         state.last_refresh_ms = now;
         state.frame_indicator = !state.frame_indicator;
 
-        let pressure = match pressure_sensor.read_pressure_mbar(&mut i2c) {
-            Ok(value) => value,
-            Err(err) => {
-                println!("Pressure read failed: {err:?}");
-                state.last_pressure.unwrap_or(0)
+        let pressure = if now < state.pressure_retry_after_ms {
+            state.last_pressure.unwrap_or(0)
+        } else {
+            match pressure_sensor.read_pressure_mbar(&mut pressure_i2c) {
+                Ok(value) => value,
+                Err(err) => {
+                    if now.saturating_sub(state.last_pressure_error_log_ms) >= 1_000 {
+                        println!("Pressure read failed: {err:?}");
+                        state.last_pressure_error_log_ms = now;
+                    }
+                    state.pressure_retry_after_ms = now.saturating_add(5_000);
+                    state.last_pressure.unwrap_or(0)
+                }
             }
         };
 
@@ -384,16 +484,19 @@ fn main() {
             false
         };
 
-        if let Ok(level) = read_battery_percentage(&mut i2c) {
-            state.battery_percent = level.min(100);
-            if state.bluetooth_on {
-                if let Err(err) = ble_server.set_battery_level(state.battery_percent.into()) {
-                    println!("BLE battery update failed: {err:?}");
+        if now.saturating_sub(state.last_battery_read_ms) >= 1_000 {
+            state.last_battery_read_ms = now;
+            if let Ok(level) = read_battery_percentage(&mut internal_i2c) {
+                state.battery_percent = level.min(100);
+                if state.bluetooth_on {
+                    if let Err(err) = ble_server.set_battery_level(state.battery_percent.into()) {
+                        println!("BLE battery update failed: {err:?}");
+                    }
                 }
             }
         }
 
-        let shot_time_secs = state.session.current_shot_duration_ms(now) as f32 / 1_000.0;
+        let shot_time_tenths = state.session.current_shot_duration_ms(now) / 100;
 
         let ui_data = UiData {
             pressure_history: &pressure_history,
@@ -402,7 +505,7 @@ fn main() {
             battery_percent: state.battery_percent,
             bluetooth_on: state.bluetooth_on,
             bt_send_success: state.last_bt_send_successful,
-            shot_time_secs,
+            shot_time_tenths,
             pressure_hex: pressure_sensor.last_hex_payload(),
             debug_mode: state.debug_mode,
             last_refresh_ms: state.last_refresh_ms,
@@ -415,20 +518,14 @@ fn main() {
 
         {
             let fb_buf = framebuffer.as_mut();
-            let mut fb = FrameBuf::new(
-                EndianCorrectedBuffer::new(fb_buf, EndianCorrection::ToBigEndian),
-                DISPLAY_WIDTH,
-                DISPLAY_HEIGHT,
-            );
-            fb.clear(Rgb565::BLACK).ok();
+            fb_buf.fill(Rgb565::BLACK);
+            let mut fb = FastFrameBuffer::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
             if let Err(err) = draw_main_screen(&mut fb, ui_data) {
                 println!("UI draw failed: {err:?}");
             }
         }
 
-        if let Err(err) = display_interface.send_frame(framebuffer.as_ref()) {
-            println!("Display update failed: {err:?}");
-        }
+        framebuffer = exchange_frame(&frame_tx, &available_rx, framebuffer);
 
         let frame_end = now_ms();
         let frame_duration = frame_end.saturating_sub(frame_start);
@@ -436,9 +533,23 @@ fn main() {
         state.frame_counter = state.frame_counter.saturating_add(1);
         if state.frame_accum_ms >= 1_000 {
             let avg = state.frame_accum_ms as f32 / state.frame_counter.max(1) as f32;
-            println!("Frame duration: {} ms (avg {:.1} ms)", frame_duration, avg);
+            let fps = 1_000.0 / avg;
+            println!(
+                "Frame duration: {} ms (avg {:.1} ms, {:.1} FPS)",
+                frame_duration, avg, fps
+            );
             state.frame_accum_ms = 0;
             state.frame_counter = 0;
+        }
+
+        #[cfg(feature = "benchmark")]
+        if pipeline_samples < 105 {
+            let pipeline_ended_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+            pipeline_stats.record(pipeline_ended_us.saturating_sub(pipeline_started_us));
+            pipeline_samples += 1;
+            if pipeline_samples == 105 {
+                pipeline_stats.report(5);
+            }
         }
 
         FreeRtos::delay_ms(2);
@@ -450,7 +561,7 @@ fn run_display_benchmarks<SPI, DC>(
     display: &mut FastSpiInterface<'_, SPI, DC>,
     framebuffer: &mut [Rgb565; PIXEL_COUNT],
 ) where
-    SPI: embedded_hal::spi::SpiDevice,
+    SPI: embedded_hal::spi::SpiDevice<Error = esp_idf_hal::spi::SpiError>,
     DC: embedded_hal::digital::OutputPin,
 {
     use mxcoffee::benchmark::BenchmarkStats;
@@ -464,19 +575,17 @@ fn run_display_benchmarks<SPI, DC>(
         DISPLAY_SPI_HZ, DISPLAY_TRANSFER_BUFFER_SIZE, DISPLAY_WIDTH, DISPLAY_HEIGHT
     );
 
-    let mut spi_stats = BenchmarkStats::new("spi_alternating_frame", FRAME_BYTES);
+    let mut spi_stats = Box::new(BenchmarkStats::new("spi_alternating_frame", FRAME_BYTES));
     for iteration in 0..ITERATIONS {
         let color = if iteration % 2 == 0 {
             Rgb565::new(31, 0, 0)
         } else {
             Rgb565::new(0, 0, 31)
         };
-        framebuffer.fill(
-            embedded_graphics::pixelcolor::raw::RawU16::new(color.into_storage().to_be()).into(),
-        );
+        framebuffer.fill(color);
         let started = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         display
-            .send_frame(framebuffer)
+            .send_frame_queued(framebuffer)
             .expect("benchmark SPI transfer failed");
         let ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         spi_stats.record(ended.saturating_sub(started));
@@ -489,8 +598,8 @@ fn run_display_benchmarks<SPI, DC>(
         *value = ((index as i32 * 9_000) / PRESSURE_HISTORY_LEN as i32) as i16;
     }
 
-    let mut render_stats = BenchmarkStats::new("render_dynamic_ui", 0);
-    let mut frame_stats = BenchmarkStats::new("frame_dynamic", FRAME_BYTES);
+    let mut render_stats = Box::new(BenchmarkStats::new("render_dynamic_ui", 0));
+    let mut frame_stats = Box::new(BenchmarkStats::new("frame_dynamic", FRAME_BYTES));
     for iteration in 0..ITERATIONS {
         history.rotate_left(1);
         history[PRESSURE_HISTORY_LEN - 1] = ((iteration * 97) % 10_000) as i16;
@@ -501,7 +610,7 @@ fn run_display_benchmarks<SPI, DC>(
             battery_percent: 87,
             bluetooth_on: true,
             bt_send_success: iteration % 3 != 0,
-            shot_time_secs: iteration as f32 / 10.0,
+            shot_time_tenths: iteration as u64,
             pressure_hex: "01 02 03",
             debug_mode: false,
             last_refresh_ms: iteration as u64 * 20,
@@ -515,18 +624,14 @@ fn run_display_benchmarks<SPI, DC>(
         let frame_started = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         let render_started = frame_started;
         {
-            let mut fb = FrameBuf::new(
-                EndianCorrectedBuffer::new(framebuffer, EndianCorrection::ToBigEndian),
-                DISPLAY_WIDTH,
-                DISPLAY_HEIGHT,
-            );
-            fb.clear(Rgb565::BLACK).ok();
+            framebuffer.fill(Rgb565::BLACK);
+            let mut fb = FastFrameBuffer::new(&mut *framebuffer, DISPLAY_WIDTH, DISPLAY_HEIGHT);
             draw_main_screen(&mut fb, data).expect("benchmark render failed");
         }
         let render_ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         render_stats.record(render_ended.saturating_sub(render_started));
         display
-            .send_frame(framebuffer)
+            .send_frame_queued(framebuffer)
             .expect("benchmark frame transfer failed");
         let frame_ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         frame_stats.record(frame_ended.saturating_sub(frame_started));

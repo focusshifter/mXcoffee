@@ -1,9 +1,6 @@
 use core::fmt::Write as _;
 
-use esp_idf_hal::{
-    delay::{FreeRtos, TickType},
-    i2c::I2cDriver,
-};
+use esp_idf_hal::{delay::TickType, i2c::I2cDriver};
 use esp_idf_sys::EspError;
 use heapless::String;
 
@@ -13,24 +10,32 @@ const SAMPLE_COUNT: usize = 3;
 
 pub struct PressureSensor {
     last_hex: String<16>,
+    samples: [f32; SAMPLE_COUNT],
+    sample_count: usize,
+    next_sample: usize,
 }
 
 impl PressureSensor {
     pub fn new() -> Self {
         Self {
             last_hex: String::new(),
+            samples: [0.0; SAMPLE_COUNT],
+            sample_count: 0,
+            next_sample: 0,
         }
     }
 
     pub fn read_pressure_mbar(&mut self, i2c: &mut I2cDriver<'_>) -> Result<i16, EspError> {
-        let mut samples = [0f32; SAMPLE_COUNT];
+        let sample = self.read_sample(i2c)?;
+        self.samples[self.next_sample] = sample;
+        self.next_sample = (self.next_sample + 1) % SAMPLE_COUNT;
+        self.sample_count = (self.sample_count + 1).min(SAMPLE_COUNT);
 
-        for slot in samples.iter_mut() {
-            *slot = self.read_sample(i2c)?;
-            FreeRtos::delay_ms(5);
-        }
-
-        let avg = samples.iter().copied().sum::<f32>() / SAMPLE_COUNT as f32;
+        let avg = self.samples[..self.sample_count]
+            .iter()
+            .copied()
+            .sum::<f32>()
+            / self.sample_count as f32;
         let mbar = (avg * 1000f32).round() as i32;
 
         Ok(mbar.clamp(0, 20_000) as i16)
