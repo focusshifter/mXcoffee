@@ -1,0 +1,8 @@
+{"type":"metadata","name":"rust_dashboard_demo","backend":"pure_rust_m5gfx_dma_port","display_spi_hz":40000000,"psram_hz":80000000,"cpu_hz":240000000,"resolution":"320x240","pixel_format":"RGB565","firmware_feature":"demo","device":"M5Stack Core2 v1.1","chip":"ESP32 rev3.1","date":"2026-07-11"}
+{"type":"frame_sample","phase":"startup","duration_ms":28,"average_ms":29.6,"fps":33.7}
+{"type":"frame_sample","phase":"startup","duration_ms":35,"average_ms":34.9,"fps":28.7}
+{"type":"frame_sample","phase":"steady","duration_ms":38,"average_ms":38.1,"fps":26.2}
+{"type":"frame_sample","phase":"steady","duration_ms":37,"average_ms":37.3,"fps":26.8}
+{"type":"frame_sample","phase":"steady","duration_ms":36,"average_ms":36.9,"fps":27.1}
+{"type":"acceptance","dynamic_frame_gate_fps":25.0,"minimum_observed_steady_fps":26.2,"passed":true}
+{"type":"screenshot_comparison","cpp_oracle":"951862f:screenshots/reference.bmp","rust_artifact":"benchmarks/screenshots/rust-reference.bmp","metric":"ImageMagick RMSE normalized","value":0.13325,"exact_match":false,"notes":"Geometry and data contract ported; embedded-graphics fonts and rasterization differ from C++ MoonGloss/M5Canvas."}

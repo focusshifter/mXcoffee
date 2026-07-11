@@ -28,6 +28,7 @@ demo = []
 
 [dependencies]
 embedded-graphics = "0.8.1"
+heapless = "0.8"
 
 [target.'cfg(target_os = "espidf")'.dependencies]
 log = "0.4"
@@ -39,7 +40,6 @@ embedded-svc = "0.28.1"
 esp-idf-hal = "0.45.2"
 embedded-hal = "1.0.0"
 axp2101 = "0.1.0"
-heapless = "0.8"
 enumset = "1.1"
 
 [build-dependencies]

@@ -7,3 +7,4 @@ pub mod fast_framebuffer;
 pub mod graph;
 pub mod scale_protocol;
 pub mod session;
+pub mod ui;

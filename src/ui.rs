@@ -5,29 +5,44 @@ use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, Rgb888};
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
-use embedded_graphics::text::{Alignment, Text};
+use embedded_graphics::text::{Alignment, Baseline, Text, TextStyleBuilder};
 use heapless::String;
 
-const WIDTH: i32 = 320;
-const HEIGHT: i32 = 240;
+pub const WIDTH: i32 = 320;
+pub const HEIGHT: i32 = 240;
+pub const HISTORY_LEN: usize = 160;
+pub const GRAPH_WINDOW_MS: u32 = 30_000;
 
-const GRAPH_START_X: i32 = 10;
-const GRAPH_START_Y: i32 = 60;
-const GRAPH_PADDING_RIGHT: i32 = 45;
-const GRAPH_PADDING_BOTTOM: i32 = 10;
+const GRAPH_X: i32 = 10;
+const GRAPH_Y: i32 = 90;
+const GRAPH_WIDTH: i32 = 265;
+const GRAPH_HEIGHT: i32 = 120;
+const BAR_X: i32 = 280;
+const BAR_WIDTH: u32 = 30;
 
-const AUDIO_BAR_WIDTH: i32 = 30;
-const AUDIO_BAR_PADDING: i32 = 10;
+const DARK_BG: Rgb565 = rgb(0x03, 0x16, 0x1e);
+const ACCENT_BG: Rgb565 = rgb(0x96, 0xcb, 0xbb);
+const ACCENT_TEXT: Rgb565 = rgb(0x0a, 0x3b, 0x44);
+const PANEL_TEXT: Rgb565 = rgb(0xdd, 0xfe, 0xee);
+const GRAPH_GOOD: Rgb565 = rgb(0xbd, 0xff, 0xff);
+const GRAPH_WARNING: Rgb565 = rgb(0xd6, 0xa6, 0x7b);
+const BAR_BG: Rgb565 = rgb(0x0a, 0x3b, 0x44);
 
-const PRESSURE_GRID_VALUES: [i32; 4] = [9, 6, 3, 0];
+const fn rgb(red: u8, green: u8, blue: u8) -> Rgb565 {
+    Rgb565::new(red >> 3, green >> 2, blue >> 3)
+}
 
 pub struct UiData<'a> {
     pub pressure_history: &'a [i16],
+    pub weight_history_tenths: &'a [i16],
+    pub history_times_ms: &'a [u32],
     pub last_pressure: i16,
     pub max_sensor_pressure: i16,
-    pub battery_percent: u8,
+    pub shot_weight: f32,
+    pub flow_rate: f32,
     pub bluetooth_on: bool,
-    pub bt_send_success: bool,
+    pub scale_connected: bool,
+    pub scale_name: &'a str,
     pub shot_time_tenths: u64,
     pub pressure_hex: &'a str,
     pub debug_mode: bool,
@@ -43,186 +58,203 @@ pub fn draw_main_screen<T>(target: &mut T, data: UiData<'_>) -> Result<(), T::Er
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    let graph_width = WIDTH - GRAPH_START_X - GRAPH_PADDING_RIGHT;
-    let graph_height = HEIGHT - GRAPH_START_Y - GRAPH_PADDING_BOTTOM;
-
-    let audio_bar_x = WIDTH - AUDIO_BAR_WIDTH - AUDIO_BAR_PADDING;
-    let audio_bar_y = GRAPH_START_Y;
-    let audio_bar_height = graph_height;
-
-    // Battery indicator
-    let battery_color = match data.battery_percent {
-        0..=5 => Rgb565::RED,
-        6..=15 => Rgb565::from(Rgb888::new(255, 165, 0)),
-        16..=25 => Rgb565::YELLOW,
-        _ => Rgb565::GREEN,
-    };
-
-    let status_style = MonoTextStyle::new(&FONT_6X10, battery_color);
-    let mut battery_text: String<8> = String::new();
-    write!(&mut battery_text, "{}%", data.battery_percent).ok();
-    let _ = Text::with_alignment(
-        &battery_text,
-        Point::new(WIDTH - 10, 10),
-        status_style,
-        Alignment::Right,
-    )
-    .draw(target)?;
-
-    // Bluetooth indicator
-    let bt_color = if data.bluetooth_on {
-        if data.bt_send_success {
-            Rgb565::GREEN
-        } else {
-            Rgb565::RED
-        }
-    } else {
-        Rgb565::from(Rgb888::new(80, 80, 80))
-    };
-    let bt_style = MonoTextStyle::new(&FONT_6X10, bt_color);
-    let _ = Text::with_alignment("BT", Point::new(WIDTH - 10, 30), bt_style, Alignment::Right)
-        .draw(target)?;
-
-    let history_len = data.pressure_history.len();
-    let mut last_pressure = data.last_pressure as i32;
-    if last_pressure < 0 {
-        last_pressure = 0;
-    }
-
-    let graph_color = match last_pressure {
-        p if p > 12_000 => Rgb565::RED,
-        p if p > 9_000 => Rgb565::YELLOW,
-        p if p > 6_000 => Rgb565::GREEN,
-        _ => Rgb565::GREEN,
-    };
-
-    let show_pressure_warning = last_pressure > 12_000;
-
-    let min_pressure = 0i32;
-    let max_sensor = i32::from(data.max_sensor_pressure);
-    let max_pressure = (max_sensor - 10_000).max(1_000);
-
-    // Grid lines and labels
-    let grid_style = PrimitiveStyle::with_stroke(Rgb565::from(Rgb888::new(40, 40, 40)), 1);
-    let grid_text_style = MonoTextStyle::new(&FONT_6X10, Rgb565::from(Rgb888::new(120, 120, 120)));
-
-    for &grid in &PRESSURE_GRID_VALUES {
-        let pressure_y = GRAPH_START_Y + ((10 - grid) * graph_height).saturating_div(10);
-        Line::new(
-            Point::new(GRAPH_START_X, pressure_y),
-            Point::new(GRAPH_START_X + graph_width, pressure_y),
-        )
-        .into_styled(grid_style)
-        .draw(target)?;
-
-        let mut label: String<4> = String::new();
-        write!(&mut label, "{}", grid).ok();
-        let _ = Text::new(&label, Point::new(0, pressure_y - 5), grid_text_style).draw(target)?;
-    }
-
-    // Pressure graph
-    let line_style = PrimitiveStyle::with_stroke(graph_color, 2);
-    for idx in 1..history_len {
-        let p1 = data.pressure_history[idx - 1].clamp(0, data.max_sensor_pressure) as i32;
-        let p2 = data.pressure_history[idx].clamp(0, data.max_sensor_pressure) as i32;
-
-        let y1 = GRAPH_START_Y + graph_height - (p1 * graph_height).saturating_div(max_pressure);
-        let y2 = GRAPH_START_Y + graph_height - (p2 * graph_height).saturating_div(max_pressure);
-
-        let x1 = GRAPH_START_X + (graph_width * (idx as i32 - 1)) / history_len as i32;
-        let x2 = GRAPH_START_X + (graph_width * idx as i32) / history_len as i32;
-
-        Line::new(Point::new(x1, y1), Point::new(x2, y2))
-            .into_styled(line_style)
-            .draw(target)?;
-    }
-
-    // Pressure numeric display
-    let pressure_style = MonoTextStyle::new(&FONT_9X18_BOLD, graph_color);
-    let mut pressure_text: String<8> = String::new();
-    write!(
-        &mut pressure_text,
-        "{}.{:01}",
-        last_pressure / 1000,
-        (last_pressure % 1000) / 100
-    )
-    .ok();
-    let _ = Text::with_alignment(
-        &pressure_text,
-        Point::new(260, 10),
-        pressure_style,
-        Alignment::Right,
-    )
-    .draw(target)?;
-
-    // Shot timer
-    let timer_style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
-    let mut timer_text: String<16> = String::new();
-    write!(
-        &mut timer_text,
-        "{}.{:01}s",
-        data.shot_time_tenths / 10,
-        data.shot_time_tenths % 10
-    )
-    .ok();
-    let _ = Text::with_alignment(
-        &timer_text,
-        Point::new(130, 10),
-        timer_style,
-        Alignment::Right,
-    )
-    .draw(target)?;
-
-    // Audio-style gradient bar
-    Rectangle::new(
-        Point::new(audio_bar_x, audio_bar_y),
-        Size::new(AUDIO_BAR_WIDTH as u32, (audio_bar_height + 1) as u32),
-    )
-    .into_styled(PrimitiveStyle::with_fill(Rgb565::from(Rgb888::new(
-        40, 40, 40,
-    ))))
-    .draw(target)?;
-
-    let clamped_last = last_pressure.clamp(min_pressure, max_pressure);
-    let range = (max_pressure - min_pressure).max(1);
-    let bar_height = (clamped_last - min_pressure) * audio_bar_height / range;
-
-    for offset in 0..bar_height {
-        let pressure_at_y =
-            min_pressure + offset * (max_pressure - min_pressure) / audio_bar_height.max(1);
-        let color = gradient_color_for_pressure(pressure_at_y);
-        Rectangle::new(
-            Point::new(audio_bar_x, audio_bar_y + audio_bar_height - offset),
-            Size::new(AUDIO_BAR_WIDTH as u32, 1),
-        )
-        .into_styled(PrimitiveStyle::with_fill(color))
-        .draw(target)?;
-    }
-
-    if show_pressure_warning {
-        let stop_style = MonoTextStyle::new(&FONT_10X20, Rgb565::RED);
-        let _ = Text::with_alignment(
-            "STOP!",
-            Point::new(WIDTH / 2, HEIGHT / 2),
-            stop_style,
-            Alignment::Center,
-        )
-        .draw(target)?;
-    }
-
-    let indicator_color = if data.frame_indicator {
-        Rgb565::WHITE
-    } else {
-        Rgb565::RED
-    };
-    Rectangle::new(Point::new(WIDTH - 12, HEIGHT - 12), Size::new(8, 8))
-        .into_styled(PrimitiveStyle::with_fill(indicator_color))
-        .draw(target)?;
+    target.clear(DARK_BG)?;
+    draw_status_band(target, &data)?;
+    draw_graph(
+        target,
+        data.pressure_history,
+        data.history_times_ms,
+        max_pressure(&data),
+        pressure_color(data.last_pressure),
+    )?;
+    draw_graph(
+        target,
+        data.weight_history_tenths,
+        data.history_times_ms,
+        500,
+        GRAPH_WARNING,
+    )?;
+    draw_pressure_bar(target, data.last_pressure, max_pressure(&data))?;
+    draw_panels(target, &data)?;
 
     if data.debug_mode {
         draw_debug_overlay(target, &data)?;
     }
 
+    let indicator = if data.frame_indicator {
+        Rgb565::WHITE
+    } else {
+        Rgb565::RED
+    };
+    Rectangle::new(Point::new(WIDTH - 4, HEIGHT - 4), Size::new(4, 4))
+        .into_styled(PrimitiveStyle::with_fill(indicator))
+        .draw(target)?;
+    Ok(())
+}
+
+fn max_pressure(data: &UiData<'_>) -> i32 {
+    (i32::from(data.max_sensor_pressure) - 10_000).max(1_000)
+}
+
+fn pressure_color(pressure: i16) -> Rgb565 {
+    if pressure > 9_000 {
+        GRAPH_WARNING
+    } else {
+        GRAPH_GOOD
+    }
+}
+
+fn draw_panels<T>(target: &mut T, data: &UiData<'_>) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    for (x, header) in [(0, "SHOT TIME"), (110, "WEIGHT G"), (220, "PRESSURE")] {
+        Rectangle::new(Point::new(x, 0), Size::new(100, 80))
+            .into_styled(PrimitiveStyle::with_fill(ACCENT_BG))
+            .draw(target)?;
+        Rectangle::new(Point::new(x + 2, 18), Size::new(96, 60))
+            .into_styled(PrimitiveStyle::with_fill(ACCENT_TEXT))
+            .draw(target)?;
+        Text::new(
+            header,
+            Point::new(x + 2, 3),
+            MonoTextStyle::new(&FONT_6X10, ACCENT_TEXT),
+        )
+        .draw(target)?;
+    }
+
+    let large = MonoTextStyle::new(&FONT_9X18_BOLD, PANEL_TEXT);
+    let normal = MonoTextStyle::new(&FONT_10X20, PANEL_TEXT);
+    let small = MonoTextStyle::new(&FONT_6X10, PANEL_TEXT);
+
+    let mut value: String<16> = String::new();
+    write!(
+        &mut value,
+        "{}.{:01}",
+        data.shot_time_tenths / 10,
+        data.shot_time_tenths % 10
+    )
+    .ok();
+    Text::with_alignment(&value, Point::new(92, 40), large, Alignment::Right).draw(target)?;
+
+    value.clear();
+    write!(&mut value, "{:.1}g", data.shot_weight).ok();
+    Text::with_alignment(&value, Point::new(200, 38), normal, Alignment::Right).draw(target)?;
+    value.clear();
+    write!(&mut value, "{:.1} g/s", data.flow_rate).ok();
+    Text::with_alignment(&value, Point::new(200, 60), small, Alignment::Right).draw(target)?;
+
+    value.clear();
+    write!(
+        &mut value,
+        "{}.{:01}",
+        data.last_pressure.max(0) / 1_000,
+        (data.last_pressure.max(0) % 1_000) / 100
+    )
+    .ok();
+    Text::with_alignment(&value, Point::new(312, 40), large, Alignment::Right).draw(target)?;
+    Ok(())
+}
+
+fn draw_status_band<T>(target: &mut T, data: &UiData<'_>) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    Rectangle::new(Point::new(0, 220), Size::new(320, 20))
+        .into_styled(PrimitiveStyle::with_fill(ACCENT_BG))
+        .draw(target)?;
+    let style = MonoTextStyle::new(&FONT_6X10, ACCENT_TEXT);
+    let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
+    Text::with_text_style(
+        if data.bluetooth_on { "BT ON" } else { "BT OFF" },
+        Point::new(4, 224),
+        style,
+        text_style,
+    )
+    .draw(target)?;
+
+    let mut scale: String<40> = String::new();
+    if data.scale_connected {
+        write!(&mut scale, "SCALE: {}", data.scale_name).ok();
+    } else {
+        scale.push_str("SCALE: --").ok();
+    }
+    Text::with_alignment(&scale, Point::new(316, 224), style, Alignment::Right).draw(target)?;
+    Ok(())
+}
+
+fn draw_graph<T>(
+    target: &mut T,
+    values: &[i16],
+    times: &[u32],
+    max_value: i32,
+    color: Rgb565,
+) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    let count = values.len().min(HISTORY_LEN);
+    if count < 2 || max_value <= 0 {
+        return Ok(());
+    }
+    let use_times = times.len() >= count;
+    let last_time = if use_times {
+        times[count - 1]
+    } else {
+        GRAPH_WINDOW_MS
+    };
+    let window = GRAPH_WINDOW_MS.max(last_time).max(1);
+    let point = |index: usize| {
+        let time = if use_times {
+            times[index]
+        } else {
+            (index as u32 * window) / (count - 1) as u32
+        };
+        let value = i32::from(values[index]).clamp(0, max_value);
+        Point::new(
+            GRAPH_X + (i64::from(time) * i64::from(GRAPH_WIDTH) / i64::from(window)) as i32,
+            GRAPH_Y + GRAPH_HEIGHT - value * GRAPH_HEIGHT / max_value,
+        )
+    };
+    let line = PrimitiveStyle::with_stroke(color, 1);
+    let mut previous = point(0);
+    for index in 1..count {
+        let current = point(index);
+        Line::new(previous, current)
+            .into_styled(line)
+            .draw(target)?;
+        previous = current;
+    }
+    Ok(())
+}
+
+fn draw_pressure_bar<T>(target: &mut T, pressure: i16, max_value: i32) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    Rectangle::new(
+        Point::new(BAR_X, GRAPH_Y),
+        Size::new(BAR_WIDTH, (GRAPH_HEIGHT + 1) as u32),
+    )
+    .into_styled(PrimitiveStyle::with_fill(BAR_BG))
+    .draw(target)?;
+    let height =
+        (i32::from(pressure).clamp(0, max_value) * GRAPH_HEIGHT / max_value).clamp(0, GRAPH_HEIGHT);
+    for offset in 0..height {
+        let pressure_at_y = offset * max_value / GRAPH_HEIGHT;
+        Line::new(
+            Point::new(BAR_X, GRAPH_Y + GRAPH_HEIGHT - offset),
+            Point::new(
+                BAR_X + BAR_WIDTH as i32 - 1,
+                GRAPH_Y + GRAPH_HEIGHT - offset,
+            ),
+        )
+        .into_styled(PrimitiveStyle::with_stroke(
+            gradient_color_for_pressure(pressure_at_y),
+            1,
+        ))
+        .draw(target)?;
+    }
     Ok(())
 }
 
@@ -230,11 +262,11 @@ pub fn draw_center_message<T>(target: &mut T, text: &str) -> Result<(), T::Error
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    let style = MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE);
+    target.clear(DARK_BG)?;
     Text::with_alignment(
         text,
         Point::new(WIDTH / 2, HEIGHT / 2),
-        style,
+        MonoTextStyle::new(&FONT_10X20, Rgb565::WHITE),
         Alignment::Center,
     )
     .draw(target)
@@ -245,68 +277,61 @@ fn draw_debug_overlay<T>(target: &mut T, data: &UiData<'_>) -> Result<(), T::Err
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    let style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
-    let mut y = GRAPH_START_Y + 10;
-
-    let mut buffer: String<64> = String::new();
-
-    buffer.clear();
-    write!(&mut buffer, "Last refresh: {} ms", data.last_refresh_ms).ok();
-    let _ = Text::new(&buffer, Point::new(40, y), style).draw(target)?;
-    y += 12;
-
-    buffer.clear();
-    write!(&mut buffer, "Sensor raw: {}", data.pressure_hex).ok();
-    let _ = Text::new(&buffer, Point::new(40, y), style).draw(target)?;
-    y += 12;
-
-    buffer.clear();
+    Rectangle::new(Point::new(8, 88), Size::new(260, 70))
+        .into_styled(PrimitiveStyle::with_fill(DARK_BG))
+        .draw(target)?;
+    let style = MonoTextStyle::new(&FONT_6X10, PANEL_TEXT);
+    let mut line: String<64> = String::new();
     write!(
-        &mut buffer,
-        "Pressure: {}.{:03} bar",
-        data.last_pressure / 1000,
-        data.last_pressure % 1000
+        &mut line,
+        "Pressure: {} raw: {}",
+        data.last_pressure, data.pressure_hex
     )
     .ok();
-    let _ = Text::new(&buffer, Point::new(40, y), style).draw(target)?;
-    y += 12;
-
-    buffer.clear();
+    Text::new(&line, Point::new(10, 100), style).draw(target)?;
+    line.clear();
     write!(
-        &mut buffer,
-        "Shot timer: {} ({}.{:01}s)",
+        &mut line,
+        "Timer: {} refresh: {}ms",
         if data.timer_running {
             "running"
         } else {
             "paused"
         },
-        data.shot_time_tenths / 10,
-        data.shot_time_tenths % 10
+        data.last_refresh_ms
     )
     .ok();
-    let _ = Text::new(&buffer, Point::new(40, y), style).draw(target)?;
-    y += 12;
-
-    buffer.clear();
-    write!(&mut buffer, "Last activity: {} ms", data.last_activity_ms).ok();
-    let _ = Text::new(&buffer, Point::new(40, y), style).draw(target)?;
-    y += 12;
-
-    let auto_off_remaining = data
+    Text::new(&line, Point::new(10, 114), style).draw(target)?;
+    line.clear();
+    let remaining = data
         .last_activity_ms
         .saturating_add(data.auto_off_timeout_ms)
         .saturating_sub(data.now_ms);
-
-    buffer.clear();
-    write!(
-        &mut buffer,
-        "Auto-off in: {} s",
-        (auto_off_remaining / 1000)
-    )
-    .ok();
-    Text::new(&buffer, Point::new(40, y), style).draw(target)?;
-
+    write!(&mut line, "Auto-off: {}s", remaining / 1_000).ok();
+    Text::new(&line, Point::new(10, 128), style).draw(target)?;
     Ok(())
+}
+
+pub fn build_reference_histories(
+    pressure: &mut [i16; HISTORY_LEN],
+    weight: &mut [i16; HISTORY_LEN],
+    times: &mut [u32; HISTORY_LEN],
+) {
+    for index in 0..HISTORY_LEN {
+        times[index] = (GRAPH_WINDOW_MS as usize * index).div_ceil(HISTORY_LEN) as u32;
+        pressure[index] = if index < 32 {
+            (8_400 * index / 32) as i16
+        } else if index < 116 {
+            8_400
+        } else {
+            (8_400 - ((index - 116) * 8_400 / (HISTORY_LEN - 116))) as i16
+        };
+        weight[index] = if index < 24 {
+            0
+        } else {
+            (40 + (218 - 40) * (index - 24) / (HISTORY_LEN - 24)) as i16
+        };
+    }
 }
 
 fn gradient_color_for_pressure(pressure: i32) -> Rgb565 {
@@ -318,21 +343,87 @@ fn gradient_color_for_pressure(pressure: i32) -> Rgb565 {
         let green = map(pressure, 6_000, 7_000, 96, 255).clamp(0, 255) as u8;
         Rgb565::from(Rgb888::new(gray, green, gray))
     } else if pressure <= 8_000 {
-        Rgb565::from(Rgb888::new(0, 255, 0))
+        Rgb565::GREEN
     } else if pressure <= 8_500 {
-        let red = map(pressure, 8_000, 8_500, 0, 255).clamp(0, 255) as u8;
-        Rgb565::from(Rgb888::new(red, 255, 0))
+        Rgb565::from(Rgb888::new(
+            map(pressure, 8_000, 8_500, 0, 255) as u8,
+            255,
+            0,
+        ))
     } else if pressure <= 10_000 {
-        let green = map(pressure, 8_500, 10_000, 255, 0).clamp(0, 255) as u8;
-        Rgb565::from(Rgb888::new(255, green, 0))
+        Rgb565::from(Rgb888::new(
+            255,
+            map(pressure, 8_500, 10_000, 255, 0) as u8,
+            0,
+        ))
     } else {
-        Rgb565::from(Rgb888::new(255, 0, 0))
+        Rgb565::RED
     }
 }
 
 fn map(value: i32, in_min: i32, in_max: i32, out_min: i32, out_max: i32) -> i32 {
-    if in_max == in_min {
-        return out_min;
-    }
     (value - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fast_framebuffer::FastFrameBuffer;
+
+    #[test]
+    fn reference_histories_match_cpp_oracle_endpoints() {
+        let mut pressure = [0; HISTORY_LEN];
+        let mut weight = [0; HISTORY_LEN];
+        let mut times = [0; HISTORY_LEN];
+        build_reference_histories(&mut pressure, &mut weight, &mut times);
+        assert_eq!(
+            (pressure[0], pressure[32], pressure[115], pressure[159]),
+            (0, 8_400, 8_400, 191)
+        );
+        assert_eq!((weight[23], weight[24], weight[159]), (0, 40, 216));
+        assert_eq!(times[159], 29_813);
+    }
+
+    #[test]
+    fn reference_dashboard_uses_all_cpp_layout_regions() {
+        let mut pressure = [0; HISTORY_LEN];
+        let mut weight = [0; HISTORY_LEN];
+        let mut times = [0; HISTORY_LEN];
+        build_reference_histories(&mut pressure, &mut weight, &mut times);
+        let mut pixels = [Rgb565::BLACK; WIDTH as usize * HEIGHT as usize];
+        let mut target = FastFrameBuffer::new(&mut pixels, WIDTH as usize, HEIGHT as usize);
+        draw_main_screen(
+            &mut target,
+            UiData {
+                pressure_history: &pressure,
+                weight_history_tenths: &weight,
+                history_times_ms: &times,
+                last_pressure: 8_400,
+                max_sensor_pressure: 20_000,
+                shot_weight: 21.8,
+                flow_rate: 1.0,
+                bluetooth_on: true,
+                scale_connected: true,
+                scale_name: "LFSMART SCALE",
+                shot_time_tenths: 123,
+                pressure_hex: "reference",
+                debug_mode: false,
+                last_refresh_ms: 0,
+                last_activity_ms: 0,
+                now_ms: 0,
+                auto_off_timeout_ms: 600_000,
+                timer_running: true,
+                frame_indicator: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(pixels[0], ACCENT_BG);
+        assert_eq!(pixels[110], ACCENT_BG);
+        assert_eq!(pixels[220], ACCENT_BG);
+        assert_eq!(pixels[220 * WIDTH as usize], ACCENT_BG);
+        assert_ne!(
+            pixels[(GRAPH_Y as usize + GRAPH_HEIGHT as usize) * WIDTH as usize + GRAPH_X as usize],
+            DARK_BG
+        );
+    }
 }

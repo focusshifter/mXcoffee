@@ -4,13 +4,11 @@ mod display_interface;
 mod pressure_sensor;
 mod settings;
 mod touch;
-mod ui;
 
 #[cfg(not(feature = "demo"))]
 use crate::pressure_sensor::PressureSensor;
 use crate::settings::Settings;
 use crate::touch::{Button, TouchButtons};
-use crate::ui::{draw_center_message, draw_main_screen, UiData};
 use ble_server::MxBleServer;
 use display_interface::FastSpiInterface;
 
@@ -28,8 +26,9 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_sys::EspError;
 use mipidsi::options::{ColorInversion, ColorOrder};
 use mipidsi::{models::ILI9342CRgb565, Builder};
-use mxcoffee::fast_framebuffer::{clear_black, clear_black_rect, FastFrameBuffer};
+use mxcoffee::fast_framebuffer::{clear_black, FastFrameBuffer};
 use mxcoffee::session::SessionState;
+use mxcoffee::ui::{draw_center_message, draw_main_screen, UiData};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError, TrySendError};
 
 const AXP2101_ADDR: u8 = 0x34;
@@ -347,6 +346,10 @@ fn main() {
     let mut pressure_sensor = PressureSensor::new();
     let mut touch_buttons = TouchButtons::new();
     let mut pressure_history = [0i16; PRESSURE_HISTORY_LEN];
+    let mut weight_history = [0i16; PRESSURE_HISTORY_LEN];
+    let history_times = core::array::from_fn::<_, PRESSURE_HISTORY_LEN, _>(|index| {
+        (30_000usize * index).div_ceil(PRESSURE_HISTORY_LEN) as u32
+    });
 
     let mut state = DeviceState::new(now_ms(), bluetooth_enabled);
     #[cfg(feature = "demo")]
@@ -559,6 +562,9 @@ fn main() {
 
         pressure_history.rotate_left(1);
         pressure_history[PRESSURE_HISTORY_LEN - 1] = pressure;
+        weight_history.rotate_left(1);
+        weight_history[PRESSURE_HISTORY_LEN - 1] =
+            (state.session.shot_weight * 10.0).clamp(0.0, i16::MAX as f32) as i16;
 
         state.session.update_pressure(pressure, now);
         state.bt_connected = ble_server.is_connected();
@@ -596,11 +602,15 @@ fn main() {
 
         let ui_data = UiData {
             pressure_history: &pressure_history,
+            weight_history_tenths: &weight_history,
+            history_times_ms: &history_times,
             last_pressure: pressure,
             max_sensor_pressure,
-            battery_percent: state.battery_percent,
+            shot_weight: state.session.shot_weight,
+            flow_rate: state.session.flow_rate,
             bluetooth_on: state.bluetooth_on,
-            bt_send_success: state.last_bt_send_successful,
+            scale_connected: state.session.scale_visible(now),
+            scale_name: "--",
             shot_time_tenths,
             pressure_hex,
             debug_mode: state.debug_mode,
@@ -616,10 +626,6 @@ fn main() {
         let render_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         {
             let fb_buf = framebuffer.as_mut();
-            clear_black_rect(fb_buf, DISPLAY_WIDTH, 0, 45, 275, 195);
-            clear_black_rect(fb_buf, DISPLAY_WIDTH, 35, 0, 105, 30);
-            clear_black_rect(fb_buf, DISPLAY_WIDTH, 205, 0, 65, 30);
-            clear_black_rect(fb_buf, DISPLAY_WIDTH, 275, 0, 45, 40);
             #[cfg(feature = "benchmark")]
             let clear_ended_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
             let mut fb = FastFrameBuffer::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
@@ -778,6 +784,10 @@ fn run_display_benchmarks<SPI, DC, CS>(
     }
 
     let mut history = [0i16; PRESSURE_HISTORY_LEN];
+    let weight_history = [0i16; PRESSURE_HISTORY_LEN];
+    let history_times = core::array::from_fn::<_, PRESSURE_HISTORY_LEN, _>(|index| {
+        (30_000usize * index).div_ceil(PRESSURE_HISTORY_LEN) as u32
+    });
     for (index, value) in history.iter_mut().enumerate() {
         *value = ((index as i32 * 9_000) / PRESSURE_HISTORY_LEN as i32) as i16;
     }
@@ -789,11 +799,15 @@ fn run_display_benchmarks<SPI, DC, CS>(
         history[PRESSURE_HISTORY_LEN - 1] = ((iteration * 97) % 10_000) as i16;
         let data = UiData {
             pressure_history: &history,
+            weight_history_tenths: &weight_history,
+            history_times_ms: &history_times,
             last_pressure: history[PRESSURE_HISTORY_LEN - 1],
             max_sensor_pressure: 20_000,
-            battery_percent: 87,
+            shot_weight: 21.8,
+            flow_rate: 1.0,
             bluetooth_on: true,
-            bt_send_success: iteration % 3 != 0,
+            scale_connected: true,
+            scale_name: "LFSMART SCALE",
             shot_time_tenths: iteration as u64,
             pressure_hex: "01 02 03",
             debug_mode: false,
