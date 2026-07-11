@@ -1,10 +1,12 @@
 mod ble_server;
 mod display_interface;
+#[cfg(not(feature = "demo"))]
 mod pressure_sensor;
 mod settings;
 mod touch;
 mod ui;
 
+#[cfg(not(feature = "demo"))]
 use crate::pressure_sensor::PressureSensor;
 use crate::settings::Settings;
 use crate::touch::{Button, TouchButtons};
@@ -83,7 +85,9 @@ struct DeviceState {
     frame_accum_ms: u64,
     frame_counter: u32,
     last_battery_read_ms: u64,
+    #[cfg(not(feature = "demo"))]
     last_pressure_error_log_ms: u64,
+    #[cfg(not(feature = "demo"))]
     pressure_available: bool,
 }
 
@@ -104,7 +108,9 @@ impl DeviceState {
             frame_accum_ms: 0,
             frame_counter: 0,
             last_battery_read_ms: 0,
+            #[cfg(not(feature = "demo"))]
             last_pressure_error_log_ms: 0,
+            #[cfg(not(feature = "demo"))]
             pressure_available: true,
         }
     }
@@ -288,6 +294,7 @@ fn main() {
         "Failed to configure AXP2101 after retries"
     );
 
+    #[cfg(not(feature = "demo"))]
     let mut pressure_i2c = I2cDriver::new(
         peripherals.i2c0,
         gpios.gpio33,
@@ -336,11 +343,14 @@ fn main() {
         .unwrap();
     let (mut display_interface, _, _) = display.release();
 
+    #[cfg(not(feature = "demo"))]
     let mut pressure_sensor = PressureSensor::new();
     let mut touch_buttons = TouchButtons::new();
     let mut pressure_history = [0i16; PRESSURE_HISTORY_LEN];
 
     let mut state = DeviceState::new(now_ms(), bluetooth_enabled);
+    #[cfg(feature = "demo")]
+    let demo_started_ms = now_ms();
     let mut framebuffer = Box::new([Rgb565::BLACK; PIXEL_COUNT]);
 
     #[cfg(feature = "benchmark")]
@@ -522,6 +532,10 @@ fn main() {
         state.last_refresh_ms = now;
         state.frame_indicator = !state.frame_indicator;
 
+        #[cfg(feature = "demo")]
+        let pressure = mxcoffee::demo::simulated_pressure_mbar(now.saturating_sub(demo_started_ms));
+
+        #[cfg(not(feature = "demo"))]
         let pressure = if !state.pressure_available {
             state.last_pressure.unwrap_or(0)
         } else {
@@ -571,15 +585,24 @@ fn main() {
 
         let shot_time_tenths = state.session.current_shot_duration_ms(now) / 100;
 
+        #[cfg(feature = "demo")]
+        let pressure_hex = "SIM SIM SIM";
+        #[cfg(not(feature = "demo"))]
+        let pressure_hex = pressure_sensor.last_hex_payload();
+        #[cfg(feature = "demo")]
+        let max_sensor_pressure = 20_000;
+        #[cfg(not(feature = "demo"))]
+        let max_sensor_pressure = pressure_sensor.max_pressure_mbar();
+
         let ui_data = UiData {
             pressure_history: &pressure_history,
             last_pressure: pressure,
-            max_sensor_pressure: pressure_sensor.max_pressure_mbar(),
+            max_sensor_pressure,
             battery_percent: state.battery_percent,
             bluetooth_on: state.bluetooth_on,
             bt_send_success: state.last_bt_send_successful,
             shot_time_tenths,
-            pressure_hex: pressure_sensor.last_hex_payload(),
+            pressure_hex,
             debug_mode: state.debug_mode,
             last_refresh_ms: state.last_refresh_ms,
             last_activity_ms: state.last_activity_ms,

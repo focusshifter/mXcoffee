@@ -1,6 +1,7 @@
 #[cfg(feature = "benchmark")]
 pub mod benchmark;
 pub mod ble_protocol;
+pub mod demo;
 pub mod display_dma;
 pub mod fast_framebuffer;
 pub mod graph;

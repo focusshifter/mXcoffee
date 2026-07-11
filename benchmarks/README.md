@@ -26,6 +26,10 @@ Visual inspection of alternating solid frames and the RGB/checkerboard pattern
 is still required; serial timing cannot detect color or pixel corruption.
 Use `--features benchmark-soak` for the additional 1,000-upload run.
 
+Build with `--features demo` to drive the production UI and BLE notification
+path with the same simulated espresso-shot pressure profile used by the C++
+firmware. The demo does not read the external pressure sensor.
+
 `2026-07-11-cpp-current-ui-40mhz.jsonl` records the C++ parity oracle's
 existing `UI::draw` profiler around its 24-bit full-canvas redraw and
 `pushSprite`. It is an end-to-end UI reference, not an isolated upload result,
