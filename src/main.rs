@@ -7,6 +7,8 @@ mod touch;
 
 #[cfg(not(feature = "demo"))]
 use crate::pressure_sensor::PressureSensor;
+#[cfg(not(feature = "demo"))]
+use crate::settings::LastScaleConfig;
 use crate::settings::Settings;
 use crate::touch::{Button, TouchButtons};
 use ble_server::MxBleServer;
@@ -248,7 +250,8 @@ fn main() {
     let gpios = peripherals.pins;
 
     let nvs_partition = EspDefaultNvsPartition::take().expect("NVS initialization failed");
-    let settings = match Settings::new(nvs_partition.clone()) {
+    #[cfg_attr(feature = "demo", allow(unused_mut))]
+    let mut settings = match Settings::new(nvs_partition.clone()) {
         Ok(settings) => Some(settings),
         Err(err) => {
             println!("Settings initialization failed: {err:?}");
@@ -259,7 +262,16 @@ fn main() {
         .as_ref()
         .and_then(|settings| settings.bluetooth_enabled().ok())
         .unwrap_or(false);
-    let ble_server = MxBleServer::new(bluetooth_enabled).expect("BLE initialization failed");
+    let last_scale = settings
+        .as_ref()
+        .and_then(|settings| settings.load_last_scale().ok().flatten());
+    #[cfg(not(feature = "demo"))]
+    let mut persisted_scale_address = last_scale
+        .as_ref()
+        .map(|scale| scale.address.clone())
+        .unwrap_or_default();
+    let ble_server =
+        MxBleServer::new(bluetooth_enabled, last_scale).expect("BLE initialization failed");
     let _ = ble_server.log(b"Rust firmware started");
 
     let pin_dc = esp_idf_hal::gpio::PinDriver::output(gpios.gpio15).unwrap();
@@ -574,6 +586,21 @@ fn main() {
         state
             .session
             .update_scale(scale.connected, scale.weight_grams, now);
+        #[cfg(not(feature = "demo"))]
+        if scale.connected && scale.address != persisted_scale_address {
+            if let Some(settings) = settings.as_mut() {
+                let config = LastScaleConfig {
+                    address: scale.address.clone(),
+                    name: scale.name.clone(),
+                    address_type: scale.address_type,
+                    scale_type: 1,
+                };
+                match settings.save_last_scale(&config) {
+                    Ok(()) => persisted_scale_address.clone_from(&scale.address),
+                    Err(err) => println!("Failed to persist scale: {err:?}"),
+                }
+            }
+        }
 
         pressure_history.rotate_left(1);
         pressure_history[PRESSURE_HISTORY_LEN - 1] = pressure;

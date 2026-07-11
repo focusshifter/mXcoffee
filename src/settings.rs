@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Last-scale persistence is consumed by the upcoming scale manager.
-
 use esp_idf_svc::nvs::{EspDefaultNvs, EspDefaultNvsPartition, EspNvs};
 use esp_idf_sys::EspError;
 
@@ -70,6 +68,7 @@ impl Settings {
         }))
     }
 
+    #[cfg_attr(feature = "demo", allow(dead_code))]
     pub fn save_last_scale(&mut self, scale: &LastScaleConfig) -> Result<(), EspError> {
         if scale.address.is_empty() || scale.scale_type == 0 {
             return Err(EspError::from_infallible::<
@@ -84,6 +83,7 @@ impl Settings {
         self.nvs.set_str(KEY_LAST_SCALE_NAME, &scale.name)
     }
 
+    #[allow(dead_code)]
     pub fn clear_last_scale(&mut self) -> Result<(), EspError> {
         self.nvs.remove(KEY_LAST_SCALE_ADDRESS)?;
         self.nvs.remove(KEY_LAST_SCALE_ADDRESS_TYPE)?;

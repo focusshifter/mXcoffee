@@ -3,11 +3,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use crate::settings::LastScaleConfig;
 use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
 use esp32_nimble::utilities::BleUuid;
 use esp32_nimble::{
-    uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEError, BLEScan,
-    NimbleProperties,
+    uuid128, BLEAddress, BLEAddressType, BLEAdvertisementData, BLECharacteristic, BLEDevice,
+    BLEError, BLEScan, NimbleProperties,
 };
 use mxcoffee::ble_protocol::{clamp_battery_level, PressureState, DEVICE_NAME};
 use mxcoffee::scale_protocol::{decode_lf_smart_scale_weight, matches_lf_smart_scale_name};
@@ -21,6 +22,8 @@ pub struct ScaleSnapshot {
     pub name: String,
     pub weight_grams: f32,
     pub samples: u64,
+    pub address: String,
+    pub address_type: u8,
 }
 
 type Characteristic = Arc<NimbleMutex<BLECharacteristic>>;
@@ -33,10 +36,14 @@ pub struct MxBleServer {
     log_characteristic: Characteristic,
     pressure_characteristic: Characteristic,
     scale: Arc<Mutex<ScaleSnapshot>>,
+    preferred_scale: Arc<Mutex<Option<LastScaleConfig>>>,
 }
 
 impl MxBleServer {
-    pub fn new(enabled: bool) -> Result<Arc<Self>, BLEError> {
+    pub fn new(
+        enabled: bool,
+        preferred_scale: Option<LastScaleConfig>,
+    ) -> Result<Arc<Self>, BLEError> {
         let device = BLEDevice::take();
         BLEDevice::set_device_name(DEVICE_NAME)?;
         let advertising = device.get_advertising();
@@ -110,6 +117,7 @@ impl MxBleServer {
             log_characteristic,
             pressure_characteristic,
             scale: Arc::new(Mutex::new(ScaleSnapshot::default())),
+            preferred_scale: Arc::new(Mutex::new(preferred_scale)),
         });
         Self::spawn_scale_worker(owner.clone(), device);
         Ok(owner)
@@ -182,6 +190,31 @@ impl MxBleServer {
         owner: Arc<Self>,
         device: &'static BLEDevice,
     ) -> Result<(), BLEError> {
+        let preferred = owner.preferred_scale.lock().unwrap().clone();
+        if let Some(preferred) = preferred {
+            if preferred.scale_type == 1 {
+                let address_type = match preferred.address_type {
+                    1 => BLEAddressType::Random,
+                    2 => BLEAddressType::PublicID,
+                    3 => BLEAddressType::RandomID,
+                    _ => BLEAddressType::Public,
+                };
+                if let Some(address) = BLEAddress::from_str(&preferred.address, address_type) {
+                    println!(
+                        "BLE scale trying saved device: {} ({address})",
+                        preferred.name
+                    );
+                    if Self::connect_candidate(owner.clone(), device, address, preferred.name)
+                        .await
+                        .is_ok()
+                    {
+                        return Ok(());
+                    }
+                    println!("BLE saved scale unavailable; scanning");
+                }
+            }
+        }
+
         let mut scan = BLEScan::new();
         let found = scan
             .active_scan(true)
@@ -204,6 +237,15 @@ impl MxBleServer {
             return Ok(());
         };
         println!("BLE scale discovered: {name} ({address})");
+        Self::connect_candidate(owner, device, address, name).await
+    }
+
+    async fn connect_candidate(
+        owner: Arc<Self>,
+        device: &'static BLEDevice,
+        address: BLEAddress,
+        name: String,
+    ) -> Result<(), BLEError> {
         let mut client = device.new_client();
         client.set_connection_params(24, 48, 0, 60, 160, 159);
         client.connect(&address).await?;
@@ -227,8 +269,16 @@ impl MxBleServer {
         {
             let mut scale = owner.scale.lock().unwrap();
             scale.connected = true;
-            scale.name = name;
+            scale.name.clone_from(&name);
+            scale.address = address.to_string();
+            scale.address_type = address.addr_type() as u8;
         }
+        *owner.preferred_scale.lock().unwrap() = Some(LastScaleConfig {
+            address: address.to_string(),
+            name,
+            address_type: address.addr_type() as u8,
+            scale_type: 1,
+        });
         println!("BLE scale subscribed: FFF0/FFF4");
 
         while owner.enabled.load(Ordering::Acquire) && client.connected() {
