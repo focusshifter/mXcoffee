@@ -1,313 +1,241 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
-use enumset::enum_set;
-use esp_idf_hal::modem::Modem;
-use esp_idf_svc::bt::ble::gap::{AdvConfiguration, BleGapEvent, EspBleGap};
-use esp_idf_svc::bt::ble::gatt::server::{ConnectionId, EspGatts, GattsEvent};
-use esp_idf_svc::bt::ble::gatt::{
-    AutoResponse, GattCharacteristic, GattId, GattInterface, GattServiceId, GattStatus, Handle,
-    Permission, Property,
+use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
+use esp32_nimble::utilities::BleUuid;
+use esp32_nimble::{
+    uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEError, BLEScan,
+    NimbleProperties,
 };
-use esp_idf_svc::bt::{Ble, BtDriver, BtStatus, BtUuid};
-use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_sys::EspError;
 use mxcoffee::ble_protocol::{clamp_battery_level, PressureState, DEVICE_NAME};
+use mxcoffee::scale_protocol::{decode_lf_smart_scale_weight, matches_lf_smart_scale_name};
 
-const APP_ID: u16 = 0;
-const BATTERY_SERVICE_UUID: u16 = 0x180f;
-const BATTERY_CHARACTERISTIC_UUID: u16 = 0x2a19;
-const LOG_SERVICE_UUID: u128 = 0x873ae8284c5a4342b5399d900bf7ebd0;
-const LOG_CHARACTERISTIC_UUID: u128 = 0x873ae8294c5a4342b5399d900bf7ebd0;
-const PRESSURE_SERVICE_UUID: u128 = 0x873ae82a4c5a4342b5399d900bf7ebd0;
-const PRESSURE_CHARACTERISTIC_UUID: u128 = 0x873ae82b4c5a4342b5399d900bf7ebd0;
-const PRESSURE_ZERO_CHARACTERISTIC_UUID: u128 = 0x873ae82c4c5a4342b5399d900bf7ebd0;
+const LF_SERVICE_UUID: u16 = 0xfff0;
+const LF_DATA_UUID: u16 = 0xfff4;
 
-type Driver = BtDriver<'static, Ble>;
-type Gap = Arc<EspBleGap<'static, Ble, Arc<Driver>>>;
-type Gatts = Arc<EspGatts<'static, Ble, Arc<Driver>>>;
-
-#[derive(Default)]
-struct State {
-    enabled: bool,
-    advertising_configured: bool,
-    gatt_if: Option<GattInterface>,
-    connection_id: Option<ConnectionId>,
-    battery_service: Option<Handle>,
-    log_service: Option<Handle>,
-    pressure_service: Option<Handle>,
-    battery_handle: Option<Handle>,
-    log_handle: Option<Handle>,
-    pressure_handle: Option<Handle>,
-    zero_handle: Option<Handle>,
-    pressure: PressureState,
+#[derive(Debug, Clone, Default)]
+pub struct ScaleSnapshot {
+    pub connected: bool,
+    pub name: String,
+    pub weight_grams: f32,
+    pub samples: u64,
 }
 
+type Characteristic = Arc<NimbleMutex<BLECharacteristic>>;
+
 pub struct MxBleServer {
-    gap: Gap,
-    gatts: Gatts,
-    state: Mutex<State>,
+    enabled: Arc<AtomicBool>,
+    connected: Arc<AtomicBool>,
+    pressure: Arc<Mutex<PressureState>>,
+    battery_characteristic: Characteristic,
+    log_characteristic: Characteristic,
+    pressure_characteristic: Characteristic,
+    scale: Arc<Mutex<ScaleSnapshot>>,
 }
 
 impl MxBleServer {
-    pub fn new(
-        modem: Modem,
-        nvs: EspDefaultNvsPartition,
-        enabled: bool,
-    ) -> Result<Arc<Self>, EspError> {
-        let driver = Arc::new(BtDriver::new(modem, Some(nvs))?);
-        let server = Arc::new(Self {
-            gap: Arc::new(EspBleGap::new(driver.clone())?),
-            gatts: Arc::new(EspGatts::new(driver)?),
-            state: Mutex::new(State {
-                enabled,
-                ..State::default()
-            }),
+    pub fn new(enabled: bool) -> Result<Arc<Self>, BLEError> {
+        let device = BLEDevice::take();
+        BLEDevice::set_device_name(DEVICE_NAME)?;
+        let advertising = device.get_advertising();
+        let server = device.get_server();
+        let enabled_flag = Arc::new(AtomicBool::new(enabled));
+        let connected = Arc::new(AtomicBool::new(false));
+        let pressure = Arc::new(Mutex::new(PressureState::default()));
+
+        let connected_on_connect = connected.clone();
+        let enabled_on_connect = enabled_flag.clone();
+        server.on_connect(move |server, connection| {
+            connected_on_connect.store(true, Ordering::Release);
+            let _ = server.update_conn_params(connection.conn_handle(), 24, 48, 0, 60);
+            if enabled_on_connect.load(Ordering::Acquire) {
+                let _ = advertising.lock().start();
+            }
         });
 
-        let gap_server = server.clone();
-        server.gap.subscribe(move |event| {
-            if let Err(err) = gap_server.on_gap_event(event) {
-                println!("BLE GAP event failed: {err:?}");
+        let connected_on_disconnect = connected.clone();
+        let enabled_on_disconnect = enabled_flag.clone();
+        server.on_disconnect(move |_connection, _reason| {
+            connected_on_disconnect.store(false, Ordering::Release);
+            if enabled_on_disconnect.load(Ordering::Acquire) {
+                let _ = advertising.lock().start();
             }
-        })?;
+        });
 
-        let gatts_server = server.clone();
-        server.gatts.subscribe(move |(gatt_if, event)| {
-            if let Err(err) = gatts_server.on_gatts_event(gatt_if, event) {
-                println!("BLE GATT event failed: {err:?}");
-            }
-        })?;
-        server.gatts.register_app(APP_ID)?;
+        let battery_service = server.create_service(BleUuid::from_uuid16(0x180f));
+        let battery_characteristic = battery_service.lock().create_characteristic(
+            BleUuid::from_uuid16(0x2a19),
+            NimbleProperties::READ | NimbleProperties::NOTIFY,
+        );
+        battery_characteristic.lock().set_value(&[100]);
 
-        Ok(server)
+        let log_service = server.create_service(uuid128!("873ae828-4c5a-4342-b539-9d900bf7ebd0"));
+        let log_characteristic = log_service.lock().create_characteristic(
+            uuid128!("873ae829-4c5a-4342-b539-9d900bf7ebd0"),
+            NimbleProperties::READ | NimbleProperties::NOTIFY,
+        );
+
+        let pressure_service =
+            server.create_service(uuid128!("873ae82a-4c5a-4342-b539-9d900bf7ebd0"));
+        let pressure_characteristic = pressure_service.lock().create_characteristic(
+            uuid128!("873ae82b-4c5a-4342-b539-9d900bf7ebd0"),
+            NimbleProperties::READ | NimbleProperties::NOTIFY,
+        );
+        pressure_characteristic.lock().set_value(&[0, 0]);
+        let zero_characteristic = pressure_service.lock().create_characteristic(
+            uuid128!("873ae82c-4c5a-4342-b539-9d900bf7ebd0"),
+            NimbleProperties::WRITE,
+        );
+        let pressure_for_zero = pressure.clone();
+        zero_characteristic.lock().on_write(move |_| {
+            pressure_for_zero.lock().unwrap().zero();
+        });
+
+        advertising.lock().set_data(
+            BLEAdvertisementData::new()
+                .name(DEVICE_NAME)
+                .add_service_uuid(uuid128!("873ae82a-4c5a-4342-b539-9d900bf7ebd0")),
+        )?;
+        if enabled {
+            advertising.lock().start()?;
+        }
+
+        let owner = Arc::new(Self {
+            enabled: enabled_flag,
+            connected,
+            pressure,
+            battery_characteristic,
+            log_characteristic,
+            pressure_characteristic,
+            scale: Arc::new(Mutex::new(ScaleSnapshot::default())),
+        });
+        Self::spawn_scale_worker(owner.clone(), device);
+        Ok(owner)
     }
 
-    pub fn set_enabled(&self, enabled: bool) -> Result<(), EspError> {
-        let configured = {
-            let mut state = self.state.lock().unwrap();
-            state.enabled = enabled;
-            state.advertising_configured
-        };
-        if configured {
-            if enabled {
-                self.gap.start_advertising()
-            } else {
-                self.gap.stop_advertising()
-            }
+    pub fn set_enabled(&self, enabled: bool) -> Result<(), BLEError> {
+        self.enabled.store(enabled, Ordering::Release);
+        if enabled {
+            BLEDevice::take().get_advertising().lock().start()
         } else {
-            Ok(())
+            self.scale.lock().unwrap().connected = false;
+            BLEDevice::take().get_advertising().lock().stop()
         }
     }
 
     pub fn is_connected(&self) -> bool {
-        self.state.lock().unwrap().connection_id.is_some()
+        self.connected.load(Ordering::Acquire)
     }
 
-    pub fn notify_pressure(&self, raw_pressure: i16) -> Result<bool, EspError> {
-        let (gatt_if, conn_id, handle, payload) = {
-            let mut state = self.state.lock().unwrap();
-            state.pressure.update(raw_pressure);
-            let Some(gatt_if) = state.gatt_if else {
-                return Ok(false);
-            };
-            let Some(conn_id) = state.connection_id else {
-                return Ok(false);
-            };
-            let Some(handle) = state.pressure_handle else {
-                return Ok(false);
-            };
-            (gatt_if, conn_id, handle, state.pressure.encoded())
+    pub fn notify_pressure(&self, raw_pressure: i16) -> bool {
+        let payload = {
+            let mut pressure = self.pressure.lock().unwrap();
+            pressure.update(raw_pressure);
+            pressure.encoded()
         };
-        self.gatts.notify(gatt_if, conn_id, handle, &payload)?;
-        Ok(true)
+        let mut characteristic = self.pressure_characteristic.lock();
+        characteristic.set_value(&payload).notify();
+        self.is_connected()
     }
 
-    pub fn set_battery_level(&self, level: i32) -> Result<(), EspError> {
-        let level = [clamp_battery_level(level)];
-        let (gatt_if, connection_id, handle) = {
-            let state = self.state.lock().unwrap();
-            (state.gatt_if, state.connection_id, state.battery_handle)
-        };
-        if let Some(handle) = handle {
-            self.gatts.set_attr(handle, &level)?;
-            if let (Some(gatt_if), Some(connection_id)) = (gatt_if, connection_id) {
-                self.gatts.notify(gatt_if, connection_id, handle, &level)?;
-            }
-        }
-        Ok(())
+    pub fn set_battery_level(&self, level: i32) {
+        self.battery_characteristic
+            .lock()
+            .set_value(&[clamp_battery_level(level)])
+            .notify();
     }
 
-    pub fn log(&self, message: &[u8]) -> Result<bool, EspError> {
-        let (gatt_if, connection_id, handle) = {
-            let state = self.state.lock().unwrap();
-            (state.gatt_if, state.connection_id, state.log_handle)
-        };
-        let (Some(gatt_if), Some(connection_id), Some(handle)) = (gatt_if, connection_id, handle)
-        else {
-            return Ok(false);
-        };
-        self.gatts.notify(gatt_if, connection_id, handle, message)?;
-        Ok(true)
+    pub fn log(&self, message: &[u8]) -> bool {
+        self.log_characteristic.lock().set_value(message).notify();
+        self.is_connected()
     }
 
-    fn on_gap_event(&self, event: BleGapEvent) -> Result<(), EspError> {
-        if let BleGapEvent::AdvertisingConfigured(status) = event {
-            if status != BtStatus::Success {
-                println!("BLE advertising configuration failed: {status:?}");
-                return Ok(());
-            }
-            let enabled = {
-                let mut state = self.state.lock().unwrap();
-                state.advertising_configured = true;
-                state.enabled
-            };
-            if enabled {
-                self.gap.start_advertising()?;
-            }
-        }
-        Ok(())
+    #[cfg(not(feature = "demo"))]
+    pub fn scale_snapshot(&self) -> ScaleSnapshot {
+        self.scale.lock().unwrap().clone()
     }
 
-    fn on_gatts_event(&self, gatt_if: GattInterface, event: GattsEvent) -> Result<(), EspError> {
-        match event {
-            GattsEvent::ServiceRegistered { status, app_id }
-                if status == GattStatus::Ok && app_id == APP_ID =>
-            {
-                self.configure_and_create_services(gatt_if)?;
-            }
-            GattsEvent::ServiceCreated {
-                status: GattStatus::Ok,
-                service_handle,
-                service_id,
-            } => {
-                self.configure_service(service_handle, service_id.id.uuid)?;
-            }
-            GattsEvent::CharacteristicAdded {
-                status: GattStatus::Ok,
-                attr_handle,
-                char_uuid,
-                ..
-            } => self.register_characteristic(attr_handle, char_uuid),
-            GattsEvent::PeerConnected { conn_id, .. } => {
-                self.state.lock().unwrap().connection_id = Some(conn_id);
-            }
-            GattsEvent::PeerDisconnected { .. } => {
-                let enabled = {
-                    let mut state = self.state.lock().unwrap();
-                    state.connection_id = None;
-                    state.enabled
-                };
-                if enabled {
-                    self.gap.start_advertising()?;
+    fn spawn_scale_worker(owner: Arc<Self>, device: &'static BLEDevice) {
+        thread::Builder::new()
+            .name("ble-scale".into())
+            .stack_size(8 * 1024)
+            .spawn(move || loop {
+                if !owner.enabled.load(Ordering::Acquire) {
+                    thread::sleep(Duration::from_millis(250));
+                    continue;
                 }
-            }
-            GattsEvent::Write { handle, .. } => {
-                let mut state = self.state.lock().unwrap();
-                if state.zero_handle == Some(handle) {
-                    state.pressure.zero();
+
+                let result =
+                    esp_idf_hal::task::block_on(Self::connect_scale_once(owner.clone(), device));
+                if let Err(err) = result {
+                    println!("BLE scale cycle failed: {err:?}");
                 }
-            }
-            _ => {}
-        }
-        Ok(())
+                owner.scale.lock().unwrap().connected = false;
+                thread::sleep(Duration::from_secs(1));
+            })
+            .expect("failed to start BLE scale worker");
     }
 
-    fn configure_and_create_services(&self, gatt_if: GattInterface) -> Result<(), EspError> {
-        self.state.lock().unwrap().gatt_if = Some(gatt_if);
-        self.gap.set_device_name(DEVICE_NAME)?;
-        self.gap.set_adv_conf(&AdvConfiguration {
-            include_name: true,
-            include_txpower: true,
-            flag: 2,
-            service_uuid: Some(BtUuid::uuid128(PRESSURE_SERVICE_UUID)),
-            ..AdvConfiguration::default()
-        })?;
+    async fn connect_scale_once(
+        owner: Arc<Self>,
+        device: &'static BLEDevice,
+    ) -> Result<(), BLEError> {
+        let mut scan = BLEScan::new();
+        let found = scan
+            .active_scan(true)
+            .interval(1_349)
+            .window(449)
+            .start(device, 2_000, |candidate, data| {
+                let name = data.name()?;
+                if matches_lf_smart_scale_name(name.as_ref()) {
+                    Some((
+                        candidate.addr(),
+                        String::from_utf8_lossy(name.as_ref()).into_owned(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .await?;
 
-        for uuid in [
-            BtUuid::uuid16(BATTERY_SERVICE_UUID),
-            BtUuid::uuid128(LOG_SERVICE_UUID),
-            BtUuid::uuid128(PRESSURE_SERVICE_UUID),
-        ] {
-            self.gatts.create_service(
-                gatt_if,
-                &GattServiceId {
-                    id: GattId { uuid, inst_id: 0 },
-                    is_primary: true,
-                },
-                8,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn configure_service(&self, service_handle: Handle, uuid: BtUuid) -> Result<(), EspError> {
-        self.gatts.start_service(service_handle)?;
-        let characteristics = if uuid == BtUuid::uuid16(BATTERY_SERVICE_UUID) {
-            self.state.lock().unwrap().battery_service = Some(service_handle);
-            vec![(
-                BtUuid::uuid16(BATTERY_CHARACTERISTIC_UUID),
-                enum_set!(Permission::Read),
-                enum_set!(Property::Read | Property::Notify),
-                1,
-                vec![100],
-            )]
-        } else if uuid == BtUuid::uuid128(LOG_SERVICE_UUID) {
-            self.state.lock().unwrap().log_service = Some(service_handle);
-            vec![(
-                BtUuid::uuid128(LOG_CHARACTERISTIC_UUID),
-                enum_set!(Permission::Read),
-                enum_set!(Property::Notify),
-                200,
-                Vec::new(),
-            )]
-        } else if uuid == BtUuid::uuid128(PRESSURE_SERVICE_UUID) {
-            self.state.lock().unwrap().pressure_service = Some(service_handle);
-            vec![
-                (
-                    BtUuid::uuid128(PRESSURE_CHARACTERISTIC_UUID),
-                    enum_set!(Permission::Read),
-                    enum_set!(Property::Read | Property::Notify),
-                    2,
-                    vec![0, 0],
-                ),
-                (
-                    BtUuid::uuid128(PRESSURE_ZERO_CHARACTERISTIC_UUID),
-                    enum_set!(Permission::Write),
-                    enum_set!(Property::Write),
-                    1,
-                    Vec::new(),
-                ),
-            ]
-        } else {
-            Vec::new()
+        let Some((address, name)) = found else {
+            return Ok(());
         };
-
-        for (uuid, permissions, properties, max_len, value) in characteristics {
-            self.gatts.add_characteristic(
-                service_handle,
-                &GattCharacteristic {
-                    uuid,
-                    permissions,
-                    properties,
-                    max_len,
-                    auto_rsp: AutoResponse::ByGatt,
-                },
-                &value,
-            )?;
+        println!("BLE scale discovered: {name} ({address})");
+        let mut client = device.new_client();
+        client.set_connection_params(24, 48, 0, 60, 160, 159);
+        client.connect(&address).await?;
+        let service = client
+            .get_service(BleUuid::from_uuid16(LF_SERVICE_UUID))
+            .await?;
+        let characteristic = service
+            .get_characteristic(BleUuid::from_uuid16(LF_DATA_UUID))
+            .await?;
+        let scale_for_notify = owner.scale.clone();
+        characteristic
+            .on_notify(move |payload| {
+                if let Some(weight) = decode_lf_smart_scale_weight(payload) {
+                    let mut scale = scale_for_notify.lock().unwrap();
+                    scale.weight_grams = weight;
+                    scale.samples = scale.samples.saturating_add(1);
+                }
+            })
+            .subscribe_notify(false)
+            .await?;
+        {
+            let mut scale = owner.scale.lock().unwrap();
+            scale.connected = true;
+            scale.name = name;
         }
+        println!("BLE scale subscribed: FFF0/FFF4");
+
+        while owner.enabled.load(Ordering::Acquire) && client.connected() {
+            thread::sleep(Duration::from_millis(100));
+        }
+        client.disconnect()?;
+        println!("BLE scale disconnected");
         Ok(())
-    }
-
-    fn register_characteristic(&self, handle: Handle, uuid: BtUuid) {
-        let mut state = self.state.lock().unwrap();
-        if uuid == BtUuid::uuid16(BATTERY_CHARACTERISTIC_UUID) {
-            state.battery_handle = Some(handle);
-        } else if uuid == BtUuid::uuid128(LOG_CHARACTERISTIC_UUID) {
-            state.log_handle = Some(handle);
-        } else if uuid == BtUuid::uuid128(PRESSURE_CHARACTERISTIC_UUID) {
-            state.pressure_handle = Some(handle);
-        } else if uuid == BtUuid::uuid128(PRESSURE_ZERO_CHARACTERISTIC_UUID) {
-            state.zero_handle = Some(handle);
-        }
     }
 }

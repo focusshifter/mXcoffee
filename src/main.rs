@@ -259,8 +259,7 @@ fn main() {
         .as_ref()
         .and_then(|settings| settings.bluetooth_enabled().ok())
         .unwrap_or(false);
-    let ble_server = MxBleServer::new(peripherals.modem, nvs_partition, bluetooth_enabled)
-        .expect("BLE initialization failed");
+    let ble_server = MxBleServer::new(bluetooth_enabled).expect("BLE initialization failed");
     let _ = ble_server.log(b"Rust firmware started");
 
     let pin_dc = esp_idf_hal::gpio::PinDriver::output(gpios.gpio15).unwrap();
@@ -569,6 +568,12 @@ fn main() {
             demo_scale.update(now.saturating_sub(demo_started_ms)),
             now,
         );
+        #[cfg(not(feature = "demo"))]
+        let scale = ble_server.scale_snapshot();
+        #[cfg(not(feature = "demo"))]
+        state
+            .session
+            .update_scale(scale.connected, scale.weight_grams, now);
 
         pressure_history.rotate_left(1);
         pressure_history[PRESSURE_HISTORY_LEN - 1] = pressure;
@@ -578,10 +583,7 @@ fn main() {
 
         state.bt_connected = ble_server.is_connected();
         state.last_bt_send_successful = if state.bluetooth_on {
-            ble_server.notify_pressure(pressure).unwrap_or_else(|err| {
-                println!("BLE pressure notification failed: {err:?}");
-                false
-            })
+            ble_server.notify_pressure(pressure)
         } else {
             false
         };
@@ -591,14 +593,16 @@ fn main() {
             if let Ok(level) = read_battery_percentage(&mut internal_i2c) {
                 state.battery_percent = level.min(100);
                 if state.bluetooth_on {
-                    if let Err(err) = ble_server.set_battery_level(state.battery_percent.into()) {
-                        println!("BLE battery update failed: {err:?}");
-                    }
+                    ble_server.set_battery_level(state.battery_percent.into());
                 }
             }
         }
 
         let shot_time_tenths = state.session.current_shot_duration_ms(now) / 100;
+        #[cfg(feature = "demo")]
+        let (scale_connected, scale_name) = (true, "SimScale");
+        #[cfg(not(feature = "demo"))]
+        let (scale_connected, scale_name) = (scale.connected, scale.name.as_str());
 
         #[cfg(feature = "demo")]
         let pressure_hex = "SIM SIM SIM";
@@ -618,8 +622,8 @@ fn main() {
             shot_weight: state.session.shot_weight,
             flow_rate: state.session.flow_rate,
             bluetooth_on: state.bluetooth_on,
-            scale_connected: state.session.scale_visible(now),
-            scale_name: "--",
+            scale_connected,
+            scale_name,
             shot_time_tenths,
             pressure_hex,
             debug_mode: state.debug_mode,

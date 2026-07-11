@@ -15,6 +15,16 @@ pub fn decode_lf_smart_scale_weight(payload: &[u8]) -> Option<f32> {
     Some(sign * tenths / 10.0)
 }
 
+pub fn matches_lf_smart_scale_name(name: &[u8]) -> bool {
+    const MATCH: &[u8] = b"lfsmart scale";
+    name.windows(MATCH.len()).any(|window| {
+        window
+            .iter()
+            .zip(MATCH)
+            .all(|(left, right)| left.eq_ignore_ascii_case(right))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,5 +54,12 @@ mod tests {
     fn stored_type_ids_match_cpp() {
         assert_eq!(ScaleType::Unknown as u8, 0);
         assert_eq!(ScaleType::LfSmartScale as u8, 1);
+    }
+
+    #[test]
+    fn matches_lf_scale_names_case_insensitively() {
+        assert!(matches_lf_smart_scale_name(b"LFSMART SCALE"));
+        assert!(matches_lf_smart_scale_name(b"My lfsmart scale 2"));
+        assert!(!matches_lf_smart_scale_name(b"Coffee scale"));
     }
 }
