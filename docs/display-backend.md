@@ -312,6 +312,12 @@ seconds.
 Skin architecture and the native 320x240 asset workflow are documented in
 `docs/ui-skins.md`.
 
+The Alchemy skin uses a generated 320x240 PNG underlay converted at build time
+to a 153,600-byte RGB565 payload. On the physical Core2 its dynamic render was
+15.213 ms (65.73 FPS), pipelined submit was 20.975 ms (47.67 FPS), and completed
+LCD cadence was 32.532 ms (30.73 FPS), with zero display errors. The captured
+frame is `benchmarks/screenshots/2026-07-13-alchemy-png-device.png`.
+
 ## Diagnostic Builds
 
 - `--features benchmark` prints full-frame, render, pipeline, worker-upload,

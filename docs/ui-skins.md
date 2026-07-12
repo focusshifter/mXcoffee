@@ -21,6 +21,9 @@ firmware. The implementation is split by responsibility:
 argument delegate to it, so firmware behavior cannot change merely because a
 new skin is added.
 
+Build with `--features alchemy-skin` to select Alchemy as the firmware default
+without changing the normal production configuration.
+
 ## Theme Colors
 
 Define semantic colors once with `SkinColor::new(red, green, blue)`. Do not add
@@ -65,6 +68,30 @@ Memory reference:
 Assets live in flash. A full static background does not require another
 permanent PSRAM framebuffer, but it does increase firmware or filesystem size.
 
+Alchemy uses a real authored PNG underlay at
+`assets/skins/alchemy-underlay.png`. `tools/png_to_rgb565.py` validates its
+320x240 dimensions and generates the committed 153,600-byte
+`alchemy-underlay.rgb565` payload. Firmware copies that payload into each
+retained framebuffer only during static initialization. Live values, status,
+pressure fill, graph grid, and curves are rendered afterward and remain fully
+dynamic.
+
+Regenerate the payload after changing the PNG:
+
+```sh
+tools/png_to_rgb565.py \
+  assets/skins/alchemy-underlay.png \
+  assets/skins/alchemy-underlay.rgb565 \
+  --width 320 --height 240 \
+  --core2-compensate
+```
+
+The compensation is the inverse of the simulator's approximate Core2 preview:
+it grades the stored RGB565 asset, not the ILI9342 gamma registers. The authored
+PNG therefore remains normal sRGB while preview mode predicts its appearance on
+the physical LCD. Raw RGB565 mode intentionally shows the darker compensated
+payload.
+
 ## Native Artwork Rules
 
 - Author the final composition at 320x240; do not downscale a desktop mockup.
@@ -85,7 +112,7 @@ Run the simulator:
 cargo +stable run --example ui_simulator --target x86_64-unknown-linux-gnu
 ```
 
-Press `S` to switch between Classic and Workshop. A switch clears and
+Press `S` to cycle through Classic, Workshop, and Alchemy. A switch clears and
 reinitializes the complete retained framebuffer. Press `P` to toggle the Core2
 optical preview.
 
@@ -135,6 +162,12 @@ unchanged, that difference is not attributed to the skin architecture.
 7. Verify retained redraw after switching from every existing skin.
 8. Record host render time and physical-device frame time/FPS.
 
-The next art milestone is a dedicated native 320x240 coffee/alchemy skin. Its
-first deliverable should be a low-detail readability prototype on the physical
-display, followed by ornamentation within the measured flash and render budget.
+The Alchemy skin implements the coffee/alchemy direction with an authored
+native underlay and live overlays. Its host/device references are
+`benchmarks/screenshots/2026-07-13-alchemy-skin.png` and
+`benchmarks/screenshots/2026-07-13-alchemy-png-device.png`.
+
+On the Core2, its dynamic render measured 15.213 ms (65.73 FPS), pipelined
+submit measured 20.975 ms (47.67 FPS), and completed LCD cadence measured
+32.532 ms (30.73 FPS). Raw measurements are in
+`benchmarks/results/2026-07-13-alchemy-png-40mhz.jsonl`.

@@ -9,10 +9,16 @@ pub mod skin;
 mod splash;
 pub mod theme;
 
-pub use skin::{Skin, SkinId, CLASSIC, WORKSHOP};
+pub use skin::{Skin, SkinId, ALCHEMY, CLASSIC, WORKSHOP};
+
+#[cfg(feature = "alchemy-skin")]
+pub const DEFAULT_SKIN: &Skin = &ALCHEMY;
+#[cfg(not(feature = "alchemy-skin"))]
+pub const DEFAULT_SKIN: &Skin = &CLASSIC;
 
 use dashboard::{
-    draw_debug_overlay, draw_panel_frames, draw_panel_values, draw_skin_assets, draw_status_band,
+    draw_debug_overlay, draw_graph_background, draw_panel_frames, draw_panel_values,
+    draw_skin_assets, draw_skin_backdrop, draw_status_band,
 };
 #[cfg(test)]
 use graph::draw_antialiased_polyline;
@@ -50,7 +56,7 @@ pub fn draw_splash<T>(target: &mut T) -> Result<(), T::Error>
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    draw_splash_with_skin(target, &CLASSIC)
+    draw_splash_with_skin(target, DEFAULT_SKIN)
 }
 
 pub fn draw_splash_with_skin<T>(target: &mut T, skin: &Skin) -> Result<(), T::Error>
@@ -64,7 +70,7 @@ pub fn draw_main_screen<T>(target: &mut T, data: UiData<'_>) -> Result<(), T::Er
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    draw_main_screen_with_skin(target, data, &CLASSIC)
+    draw_main_screen_with_skin(target, data, DEFAULT_SKIN)
 }
 
 pub fn draw_main_screen_with_skin<T>(
@@ -76,6 +82,7 @@ where
     T: DrawTarget<Color = Rgb565>,
 {
     target.clear(skin.theme.screen.render)?;
+    draw_skin_backdrop(target, skin)?;
     draw_panel_frames(target, skin)?;
     draw_skin_assets(target, skin)?;
     draw_main_screen_retained_with_skin(target, data, skin)
@@ -85,7 +92,7 @@ pub fn initialize_main_screen<T>(target: &mut T) -> Result<(), T::Error>
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    initialize_main_screen_with_skin(target, &CLASSIC)
+    initialize_main_screen_with_skin(target, DEFAULT_SKIN)
 }
 
 pub fn initialize_main_screen_with_skin<T>(target: &mut T, skin: &Skin) -> Result<(), T::Error>
@@ -93,6 +100,7 @@ where
     T: DrawTarget<Color = Rgb565>,
 {
     target.clear(skin.theme.screen.render)?;
+    draw_skin_backdrop(target, skin)?;
     draw_panel_frames(target, skin)?;
     draw_skin_assets(target, skin)
 }
@@ -101,7 +109,7 @@ pub fn draw_main_screen_retained<T>(target: &mut T, data: UiData<'_>) -> Result<
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    draw_main_screen_retained_with_skin(target, data, &CLASSIC)
+    draw_main_screen_retained_with_skin(target, data, DEFAULT_SKIN)
 }
 
 pub fn draw_main_screen_retained_with_skin<T>(
@@ -120,6 +128,7 @@ where
         .rectangle()
         .into_styled(PrimitiveStyle::with_fill(skin.theme.screen.render))
         .draw(target)?;
+    draw_graph_background(target, skin)?;
     draw_status_band(target, &data, skin)?;
     draw_graph(
         target,
@@ -177,7 +186,7 @@ pub fn draw_center_message<T>(target: &mut T, text: &str) -> Result<(), T::Error
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    draw_center_message_with_skin(target, text, &CLASSIC)
+    draw_center_message_with_skin(target, text, DEFAULT_SKIN)
 }
 
 pub fn draw_center_message_with_skin<T>(
@@ -285,8 +294,13 @@ mod tests {
 
     #[test]
     fn skin_definitions_are_valid_and_distinct() {
-        for skin in [&CLASSIC, &WORKSHOP] {
+        for skin in [&CLASSIC, &WORKSHOP, &ALCHEMY] {
             assert!(skin.layout.is_valid(WIDTH, HEIGHT));
+            assert!(skin.assets.backdrop.is_none_or(|asset| {
+                asset.is_valid()
+                    && i32::from(asset.width) == WIDTH
+                    && i32::from(asset.height) == HEIGHT
+            }));
             assert!(skin
                 .assets
                 .decorations
@@ -295,6 +309,8 @@ mod tests {
         }
         assert_ne!(CLASSIC.theme, WORKSHOP.theme);
         assert_ne!(CLASSIC.layout, WORKSHOP.layout);
+        assert_ne!(WORKSHOP.theme, ALCHEMY.theme);
+        assert_ne!(WORKSHOP.layout, ALCHEMY.layout);
     }
 
     #[test]
@@ -306,6 +322,10 @@ mod tests {
         assert_eq!(
             framebuffer_checksum(&render_reference(&WORKSHOP)),
             13_180_993_026_138_904_416
+        );
+        assert_eq!(
+            framebuffer_checksum(&render_reference(&ALCHEMY)),
+            1_939_580_656_284_526_128
         );
     }
 
@@ -496,6 +516,20 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(switched, expected);
+
+        let expected = render_reference(&ALCHEMY);
+        initialize_main_screen_with_skin(
+            &mut FastFrameBuffer::new(&mut switched, WIDTH as usize, HEIGHT as usize),
+            &ALCHEMY,
+        )
+        .unwrap();
+        draw_main_screen_retained_with_skin(
+            &mut FastFrameBuffer::new(&mut switched, WIDTH as usize, HEIGHT as usize),
+            reference_data(&pressure, &weight, &times, false),
+            &ALCHEMY,
+        )
+        .unwrap();
         assert_eq!(switched, expected);
     }
 }

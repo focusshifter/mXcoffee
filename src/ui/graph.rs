@@ -2,6 +2,7 @@ use embedded_graphics::pixelcolor::{Rgb565, Rgb888};
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle};
 
+use super::skin::ChromeStyle;
 use super::{Skin, GRAPH_WINDOW_MS, HISTORY_LEN};
 
 pub(super) fn draw_graph<T>(
@@ -174,6 +175,14 @@ where
             gradient_color_for_pressure(pressure_at_y, skin),
             1,
         ))
+        .draw(target)?;
+    }
+    if let ChromeStyle::Alchemy(chrome) = skin.chrome {
+        Line::new(
+            Point::new(bar.x + 2, bar.y + 2),
+            Point::new(bar.x + 2, bar.y + bar.height as i32 - 3),
+        )
+        .into_styled(PrimitiveStyle::with_stroke(chrome.brass_light.render, 1))
         .draw(target)?;
     }
     Ok(())

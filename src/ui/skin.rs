@@ -1,10 +1,11 @@
-use super::layout::{DashboardLayout, CLASSIC_LAYOUT, WORKSHOP_LAYOUT};
-use super::theme::{Theme, CLASSIC_THEME, WORKSHOP_THEME};
+use super::layout::{DashboardLayout, ALCHEMY_LAYOUT, CLASSIC_LAYOUT, WORKSHOP_LAYOUT};
+use super::theme::{SkinColor, Theme, ALCHEMY_THEME, CLASSIC_THEME, WORKSHOP_THEME};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkinId {
     Classic,
     Workshop,
+    Alchemy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,18 +42,34 @@ impl PositionedBitmapAsset {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SkinAssets {
     pub fonts: FontAssets,
+    pub backdrop: Option<FullScreenAsset>,
     pub decorations: &'static [PositionedBitmapAsset],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FullScreenAsset {
+    pub width: u16,
+    pub height: u16,
+    pub rgb565_be: &'static [u8],
+}
+
+impl FullScreenAsset {
+    pub const fn is_valid(self) -> bool {
+        self.width as usize * self.height as usize * 2 == self.rgb565_be.len()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FontAssets {
     pub small: &'static [u8],
+    pub medium: &'static [u8],
     pub logo: &'static [u8],
     pub numeric: &'static [u8],
 }
 
 const MOON_GLOSS_FONTS: FontAssets = FontAssets {
     small: include_bytes!("../../assets/fonts/MoonGloss_16.vlw"),
+    medium: include_bytes!("../../assets/fonts/MoonGloss_24.vlw"),
     logo: include_bytes!("../../assets/fonts/MoonGloss_24_Logo.vlw"),
     numeric: include_bytes!("../../assets/fonts/MoonGloss_48_Numeric.vlw"),
 };
@@ -64,6 +81,21 @@ pub struct Skin {
     pub theme: Theme,
     pub layout: DashboardLayout,
     pub assets: SkinAssets,
+    pub chrome: ChromeStyle,
+    pub panel_headers: [&'static str; 3],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChromeStyle {
+    Flat,
+    Alchemy(AlchemyChrome),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AlchemyChrome {
+    pub brass: SkinColor,
+    pub brass_light: SkinColor,
+    pub grid: SkinColor,
 }
 
 pub const CLASSIC: Skin = Skin {
@@ -73,8 +105,11 @@ pub const CLASSIC: Skin = Skin {
     layout: CLASSIC_LAYOUT,
     assets: SkinAssets {
         fonts: MOON_GLOSS_FONTS,
+        backdrop: None,
         decorations: &[],
     },
+    chrome: ChromeStyle::Flat,
+    panel_headers: ["SHOT TIME", "WEIGHT G", "PRESSURE"],
 };
 
 pub const WORKSHOP: Skin = Skin {
@@ -84,8 +119,33 @@ pub const WORKSHOP: Skin = Skin {
     layout: WORKSHOP_LAYOUT,
     assets: SkinAssets {
         fonts: MOON_GLOSS_FONTS,
+        backdrop: None,
         decorations: &WORKSHOP_DECORATIONS,
     },
+    chrome: ChromeStyle::Flat,
+    panel_headers: ["SHOT TIME", "WEIGHT G", "PRESSURE"],
+};
+
+pub const ALCHEMY: Skin = Skin {
+    id: SkinId::Alchemy,
+    name: "Alchemy",
+    theme: ALCHEMY_THEME,
+    layout: ALCHEMY_LAYOUT,
+    assets: SkinAssets {
+        fonts: MOON_GLOSS_FONTS,
+        backdrop: Some(FullScreenAsset {
+            width: 320,
+            height: 240,
+            rgb565_be: include_bytes!("../../assets/skins/alchemy-underlay.rgb565"),
+        }),
+        decorations: &[],
+    },
+    chrome: ChromeStyle::Alchemy(AlchemyChrome {
+        brass: SkinColor::new(164, 85, 4),
+        brass_light: SkinColor::new(222, 168, 51),
+        grid: SkinColor::new(49, 24, 5),
+    }),
+    panel_headers: ["TIME", "WEIGHT", "PRESSURE"],
 };
 
 const TRANSPARENT: u16 = 0x0000;

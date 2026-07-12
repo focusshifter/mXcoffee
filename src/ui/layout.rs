@@ -126,6 +126,42 @@ pub const WORKSHOP_LAYOUT: DashboardLayout = DashboardLayout {
     frame_indicator: CLASSIC_LAYOUT.frame_indicator,
 };
 
+pub const ALCHEMY_LAYOUT: DashboardLayout = DashboardLayout {
+    panels: [
+        PanelLayout {
+            frame: RectSpec::new(229, 39, 78, 68),
+            inner: RectSpec::new(233, 58, 70, 45),
+            header: Point::new(250, 42),
+            value_right: 300,
+            value_y: 66,
+        },
+        PanelLayout {
+            frame: RectSpec::new(141, 39, 87, 68),
+            inner: RectSpec::new(145, 58, 79, 45),
+            header: Point::new(158, 42),
+            value_right: 220,
+            value_y: 61,
+        },
+        PanelLayout {
+            frame: RectSpec::new(52, 39, 88, 68),
+            inner: RectSpec::new(56, 58, 80, 45),
+            header: Point::new(63, 42),
+            value_right: 132,
+            value_y: 66,
+        },
+    ],
+    graph: GraphLayout {
+        plot: RectSpec::new(57, 125, 245, 76),
+        clear: RectSpec::new(55, 122, 249, 82),
+    },
+    pressure_bar: RectSpec::new(23, 64, 16, 137),
+    status: RectSpec::new(46, 212, 230, 18),
+    status_left: Point::new(50, 213),
+    status_right: Point::new(272, 213),
+    debug_origin: Point::new(59, 127),
+    frame_indicator: RectSpec::new(314, 235, 4, 4),
+};
+
 impl DashboardLayout {
     pub fn is_valid(self, screen_width: i32, screen_height: i32) -> bool {
         let inside = |rect: RectSpec| {

@@ -29,6 +29,7 @@ auto-power-off = []
 poweroff-test = ["auto-power-off"]
 screenshot-on-boot = []
 demo = []
+alchemy-skin = []
 
 [dependencies]
 embedded-graphics = "0.8.1"

@@ -10,6 +10,7 @@ use heapless::String;
 
 use crate::vlw::VlwFont;
 
+use super::skin::ChromeStyle;
 use super::{Skin, UiData, HEIGHT, WIDTH};
 
 pub(super) fn draw_panel_frames<T>(target: &mut T, skin: &Skin) -> Result<(), T::Error>
@@ -17,29 +18,80 @@ where
     T: DrawTarget<Color = Rgb565>,
 {
     let font = VlwFont::new(skin.assets.fonts.small).unwrap();
-    for (panel, header) in skin
-        .layout
-        .panels
-        .iter()
-        .zip(["SHOT TIME", "WEIGHT G", "PRESSURE"])
-    {
-        panel
-            .frame
-            .rectangle()
-            .into_styled(PrimitiveStyle::with_fill(skin.theme.panel.render))
-            .draw(target)?;
-        panel
-            .inner
-            .rectangle()
-            .into_styled(PrimitiveStyle::with_fill(skin.theme.panel_inner.render))
-            .draw(target)?;
+    for (panel, header) in skin.layout.panels.iter().zip(skin.panel_headers) {
+        if matches!(skin.chrome, ChromeStyle::Flat) {
+            panel
+                .frame
+                .rectangle()
+                .into_styled(PrimitiveStyle::with_fill(skin.theme.panel.render))
+                .draw(target)?;
+            panel
+                .inner
+                .rectangle()
+                .into_styled(PrimitiveStyle::with_fill(skin.theme.panel_inner.render))
+                .draw(target)?;
+        }
         font.draw(
             target,
             header,
             panel.header,
-            skin.theme.panel_inner.source,
-            skin.theme.panel.source,
+            skin.theme.panel_label.source,
+            match skin.chrome {
+                ChromeStyle::Flat => skin.theme.panel.source,
+                ChromeStyle::Alchemy(_) => skin.theme.screen.source,
+            },
         )?;
+    }
+    Ok(())
+}
+
+pub(super) fn draw_skin_backdrop<T>(target: &mut T, skin: &Skin) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    let Some(backdrop) = skin.assets.backdrop else {
+        return Ok(());
+    };
+    debug_assert!(backdrop.is_valid());
+    let width = usize::from(backdrop.width);
+    target.draw_iter(
+        backdrop
+            .rgb565_be
+            .chunks_exact(2)
+            .enumerate()
+            .map(|(index, bytes)| {
+                let raw = u16::from_be_bytes([bytes[0], bytes[1]]);
+                Pixel(
+                    Point::new((index % width) as i32, (index / width) as i32),
+                    Rgb565::new(
+                        ((raw >> 11) & 0x1f) as u8,
+                        ((raw >> 5) & 0x3f) as u8,
+                        (raw & 0x1f) as u8,
+                    ),
+                )
+            }),
+    )
+}
+
+pub(super) fn draw_graph_background<T>(target: &mut T, skin: &Skin) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    let ChromeStyle::Alchemy(chrome) = skin.chrome else {
+        return Ok(());
+    };
+    let plot = skin.layout.graph.plot;
+    for division in 1..4 {
+        let y = plot.y + division * (plot.height as i32 - 1) / 4;
+        for x in (plot.x..plot.x + plot.width as i32).step_by(4) {
+            Pixel(Point::new(x, y), chrome.grid.render).draw(target)?;
+        }
+    }
+    for division in 1..6 {
+        let x = plot.x + division * (plot.width as i32 - 1) / 6;
+        for y in (plot.y..plot.y + plot.height as i32).step_by(4) {
+            Pixel(Point::new(x, y), chrome.grid.render).draw(target)?;
+        }
     }
     Ok(())
 }
@@ -93,7 +145,11 @@ where
     }
 
     let small = VlwFont::new(skin.assets.fonts.small).unwrap();
-    let large = VlwFont::new(skin.assets.fonts.numeric).unwrap();
+    let primary = VlwFont::new(match skin.chrome {
+        ChromeStyle::Flat => skin.assets.fonts.numeric,
+        ChromeStyle::Alchemy(_) => skin.assets.fonts.medium,
+    })
+    .unwrap();
     let mut value: String<16> = String::new();
     write!(
         &mut value,
@@ -102,7 +158,7 @@ where
         data.shot_time_tenths % 10
     )
     .ok();
-    large.draw_right(
+    primary.draw_right(
         target,
         &value,
         skin.layout.panels[0].value_right,
@@ -140,7 +196,7 @@ where
         (data.last_pressure.max(0) % 1_000) / 100
     )
     .ok();
-    large.draw_right(
+    primary.draw_right(
         target,
         &value,
         skin.layout.panels[2].value_right,
@@ -159,10 +215,14 @@ pub(super) fn draw_status_band<T>(
 where
     T: DrawTarget<Color = Rgb565>,
 {
+    let status_fill = match skin.chrome {
+        ChromeStyle::Flat => skin.theme.panel.render,
+        ChromeStyle::Alchemy(_) => skin.theme.screen.render,
+    };
     skin.layout
         .status
         .rectangle()
-        .into_styled(PrimitiveStyle::with_fill(skin.theme.panel.render))
+        .into_styled(PrimitiveStyle::with_fill(status_fill))
         .draw(target)?;
     let font = VlwFont::new(skin.assets.fonts.small).unwrap();
     font.draw(
@@ -170,12 +230,21 @@ where
         if data.bluetooth_on { "BT ON" } else { "BT OFF" },
         skin.layout.status_left,
         skin.theme.status_text.source,
-        skin.theme.panel.source,
+        match skin.chrome {
+            ChromeStyle::Flat => skin.theme.panel.source,
+            ChromeStyle::Alchemy(_) => skin.theme.screen.source,
+        },
     )?;
 
     let mut scale: String<40> = String::new();
     if data.scale_connected {
-        write!(&mut scale, "Scale: {}", data.scale_name).ok();
+        if matches!(skin.chrome, ChromeStyle::Alchemy(_)) {
+            scale.push_str("SCALE LINKED").ok();
+        } else {
+            write!(&mut scale, "Scale: {}", data.scale_name).ok();
+        }
+    } else if matches!(skin.chrome, ChromeStyle::Alchemy(_)) {
+        scale.push_str("SCALE --").ok();
     } else {
         scale.push_str("Scale: --").ok();
     }
@@ -185,7 +254,10 @@ where
         skin.layout.status_right.x,
         skin.layout.status_right.y,
         skin.theme.status_text.source,
-        skin.theme.panel.source,
+        match skin.chrome {
+            ChromeStyle::Flat => skin.theme.panel.source,
+            ChromeStyle::Alchemy(_) => skin.theme.screen.source,
+        },
     )?;
     Ok(())
 }
