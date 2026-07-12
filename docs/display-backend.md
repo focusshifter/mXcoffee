@@ -254,6 +254,14 @@ AXP2101 mapping writes BLDO1 register 24 (2.9 V); driving BLDO1 at its 3.3 V
 maximum materially raises the IPS black level and washes the dark teal palette
 out toward cyan even though the framebuffer colors remain unchanged.
 
+After `mipidsi` establishes geometry, inversion, and RGB565 mode, the backend
+applies M5GFX's complete ILI9342 analog profile: external-command unlock, power
+controls, VCOM, interface control, positive and negative 15-byte gamma curves,
+display-function control, idle-off, display-on, and sleep-out. `mipidsi`'s
+generic ILI934x initialization omits these controller/module-specific settings;
+leaving them at reset defaults makes identical framebuffer colors appear
+materially different on the Core2 LCD.
+
 `scripts/render-ui-reference.sh` renders the Rust dashboard and requires exact
 pixel equality with the C++ screenshot oracle. The 2026-07-12 parity result is
 RMSE `0 (0)` across the complete 320x240 frame. The static oracle omits the

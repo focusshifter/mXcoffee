@@ -233,6 +233,38 @@ where
     DC: OutputPin,
     CS: OutputPin<Error = DC::Error>,
 {
+    pub fn configure_m5gfx_ili9342_profile(
+        &mut self,
+    ) -> Result<(), SpiError<HalSpiError, DC::Error>> {
+        const POSITIVE_GAMMA: &[u8] = &[
+            0x00, 0x0c, 0x11, 0x04, 0x11, 0x08, 0x37, 0x89, 0x4c, 0x06, 0x0c, 0x0a, 0x2e, 0x34,
+            0x0f,
+        ];
+        const NEGATIVE_GAMMA: &[u8] = &[
+            0x00, 0x0b, 0x11, 0x05, 0x13, 0x09, 0x33, 0x67, 0x48, 0x07, 0x0e, 0x0b, 0x2e, 0x33,
+            0x0f,
+        ];
+        const COMMANDS: &[(u8, &[u8])] = &[
+            (0xc8, &[0xff, 0x93, 0x42]),
+            (0xc0, &[0x12, 0x12]),
+            (0xc1, &[0x03]),
+            (0xc5, &[0xf2]),
+            (0xb0, &[0xe0]),
+            (0xf6, &[0x01, 0x00, 0x00]),
+            (0xe0, POSITIVE_GAMMA),
+            (0xe1, NEGATIVE_GAMMA),
+            (0xb6, &[0x08, 0x82, 0x1d, 0x04]),
+            (0x38, &[]),
+            (0x29, &[]),
+            (0x11, &[]),
+        ];
+
+        for (command, arguments) in COMMANDS {
+            self.send_command(*command, arguments)?;
+        }
+        Ok(())
+    }
+
     pub fn send_frame_queued(
         &mut self,
         pixels: &[Rgb565],

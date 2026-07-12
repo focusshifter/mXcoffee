@@ -430,6 +430,10 @@ fn main() {
         .init(&mut FreeRtos)
         .unwrap();
     let (mut display_interface, _, _) = display.release();
+    display_interface
+        .configure_m5gfx_ili9342_profile()
+        .expect("failed to apply M5GFX ILI9342 profile");
+    FreeRtos::delay_ms(120);
 
     let mut touch_buttons = TouchButtons::new();
     let mut pressure_history = [0i16; PRESSURE_HISTORY_LEN];
