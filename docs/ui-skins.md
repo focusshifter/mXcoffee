@@ -22,6 +22,8 @@ argument delegate to it, so firmware behavior cannot change merely because a
 new skin is added.
 
 Build with `--features alchemy-skin` to select Alchemy as the firmware default
+or `--features nge-skin` to select the NGE-inspired telemetry skin. The skin
+features are mutually exclusive.
 without changing the normal production configuration.
 
 ## Theme Colors
@@ -171,3 +173,24 @@ On the Core2, its dynamic render measured 15.213 ms (65.73 FPS), pipelined
 submit measured 20.975 ms (47.67 FPS), and completed LCD cadence measured
 32.532 ms (30.73 FPS). Raw measurements are in
 `benchmarks/results/2026-07-13-alchemy-png-40mhz.jsonl`.
+
+The NGE skin uses the same authored-underlay pipeline for a dense original
+coffee telemetry display inspired by 1990s anime command interfaces. Static
+frames, labels, ticks, and texture live in `assets/skins/nge-underlay.png`;
+pressure, weight, flow, time, both graph curves, pressure fill, and connection
+states remain live firmware overlays. Its compensated device payload is
+`assets/skins/nge-underlay.rgb565`, generated with:
+
+```sh
+tools/png_to_rgb565.py --width 320 --height 240 --core2-compensate \
+  assets/skins/nge-underlay.png assets/skins/nge-underlay.rgb565
+```
+
+The deterministic host reference is
+`benchmarks/screenshots/2026-07-13-nge-skin-raw.png`. In the simulator, press
+`S` to cycle Classic, Workshop, Alchemy, and NGE.
+
+On the Core2, NGE dynamic rendering measured 13.039 ms (76.69 FPS), pipelined
+submit measured 17.972 ms (55.64 FPS), and completed LCD cadence measured
+31.817 ms (31.42 FPS), with zero display errors. Raw measurements are in
+`benchmarks/results/2026-07-13-nge-40mhz.jsonl`.

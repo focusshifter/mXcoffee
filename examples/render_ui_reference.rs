@@ -6,7 +6,7 @@ use embedded_graphics::prelude::RgbColor;
 use mxcoffee::fast_framebuffer::FastFrameBuffer;
 use mxcoffee::ui::{
     build_reference_histories, draw_main_screen_with_skin, draw_splash_with_skin, UiData, ALCHEMY,
-    CLASSIC, HEIGHT, HISTORY_LEN, WIDTH, WORKSHOP,
+    CLASSIC, HEIGHT, HISTORY_LEN, NGE, WIDTH, WORKSHOP,
 };
 
 fn main() {
@@ -17,7 +17,9 @@ fn main() {
     let render_splash = arguments.iter().any(|argument| argument == "--splash");
     let render_debug = arguments.iter().any(|argument| argument == "--debug");
     let render_antialias = arguments.iter().any(|argument| argument == "--aa");
-    let skin = if arguments.iter().any(|argument| argument == "--alchemy") {
+    let skin = if arguments.iter().any(|argument| argument == "--nge") {
+        &NGE
+    } else if arguments.iter().any(|argument| argument == "--alchemy") {
         &ALCHEMY
     } else if arguments.iter().any(|argument| argument == "--workshop") {
         &WORKSHOP

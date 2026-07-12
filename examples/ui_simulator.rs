@@ -8,7 +8,7 @@ use mxcoffee::fast_framebuffer::FastFrameBuffer;
 use mxcoffee::session::SessionState;
 use mxcoffee::ui::{
     draw_main_screen_retained_with_skin, draw_splash_with_skin, initialize_main_screen_with_skin,
-    Skin, SkinId, UiData, ALCHEMY, CLASSIC, HEIGHT, HISTORY_LEN, WIDTH, WORKSHOP,
+    Skin, SkinId, UiData, ALCHEMY, CLASSIC, HEIGHT, HISTORY_LEN, NGE, WIDTH, WORKSHOP,
 };
 
 const HISTORY_INTERVAL_MS: u64 = 30_000 / HISTORY_LEN as u64;
@@ -70,7 +70,8 @@ fn main() {
             skin = match skin.id {
                 SkinId::Classic => &WORKSHOP,
                 SkinId::Workshop => &ALCHEMY,
-                SkinId::Alchemy => &CLASSIC,
+                SkinId::Alchemy => &NGE,
+                SkinId::Nge => &CLASSIC,
             };
             static_screen_initialized = false;
             window.set_title(&window_title(skin, panel_preview));

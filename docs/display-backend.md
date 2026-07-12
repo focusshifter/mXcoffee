@@ -312,6 +312,12 @@ seconds.
 Skin architecture and the native 320x240 asset workflow are documented in
 `docs/ui-skins.md`.
 
+Authored full-screen skins use a 153,600-byte big-endian RGB565 underlay drawn
+once into each retained framebuffer. Dynamic redraw remains limited to metric,
+graph, pressure, and status regions. The NGE skin is selected with
+`--features nge-skin`; its host reference is
+`benchmarks/screenshots/2026-07-13-nge-skin-raw.png`.
+
 The Alchemy skin uses a generated 320x240 PNG underlay converted at build time
 to a 153,600-byte RGB565 payload. On the physical Core2 its dynamic render was
 15.213 ms (65.73 FPS), pipelined submit was 20.975 ms (47.67 FPS), and completed

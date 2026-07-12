@@ -1,11 +1,12 @@
-use super::layout::{DashboardLayout, ALCHEMY_LAYOUT, CLASSIC_LAYOUT, WORKSHOP_LAYOUT};
-use super::theme::{SkinColor, Theme, ALCHEMY_THEME, CLASSIC_THEME, WORKSHOP_THEME};
+use super::layout::{DashboardLayout, ALCHEMY_LAYOUT, CLASSIC_LAYOUT, NGE_LAYOUT, WORKSHOP_LAYOUT};
+use super::theme::{SkinColor, Theme, ALCHEMY_THEME, CLASSIC_THEME, NGE_THEME, WORKSHOP_THEME};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkinId {
     Classic,
     Workshop,
     Alchemy,
+    Nge,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,6 +90,12 @@ pub struct Skin {
 pub enum ChromeStyle {
     Flat,
     Alchemy(AlchemyChrome),
+    AuthoredUnderlay(UnderlayChrome),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UnderlayChrome {
+    pub grid: SkinColor,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -146,6 +153,26 @@ pub const ALCHEMY: Skin = Skin {
         grid: SkinColor::new(49, 24, 5),
     }),
     panel_headers: ["TIME", "WEIGHT", "PRESSURE"],
+};
+
+pub const NGE: Skin = Skin {
+    id: SkinId::Nge,
+    name: "NGE",
+    theme: NGE_THEME,
+    layout: NGE_LAYOUT,
+    assets: SkinAssets {
+        fonts: MOON_GLOSS_FONTS,
+        backdrop: Some(FullScreenAsset {
+            width: 320,
+            height: 240,
+            rgb565_be: include_bytes!("../../assets/skins/nge-underlay.rgb565"),
+        }),
+        decorations: &[],
+    },
+    chrome: ChromeStyle::AuthoredUnderlay(UnderlayChrome {
+        grid: SkinColor::new(24, 70, 45),
+    }),
+    panel_headers: ["", "", ""],
 };
 
 const TRANSPARENT: u16 = 0x0000;

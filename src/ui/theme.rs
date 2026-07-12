@@ -102,3 +102,24 @@ pub const ALCHEMY_THEME: Theme = Theme {
         high: SkinColor::new(227, 138, 192),
     },
 };
+
+pub const NGE_THEME: Theme = Theme {
+    screen: SkinColor::new(3, 0, 0),
+    panel: SkinColor::new(171, 91, 0),
+    panel_inner: SkinColor::new(3, 0, 0),
+    panel_text: SkinColor::new(216, 124, 0),
+    panel_label: SkinColor::new(216, 124, 0),
+    graph_pressure: SkinColor::new(102, 187, 135),
+    graph_warning: SkinColor::new(216, 22, 8),
+    status_text: SkinColor::new(216, 124, 0),
+    splash_text: SkinColor::new(216, 124, 0),
+    splash_bean: SkinColor::new(92, 16, 4),
+    splash_mark: SkinColor::new(216, 22, 8),
+    pressure_scale: PressureScaleTheme {
+        low: SkinColor::new(20, 60, 37),
+        low_peak: SkinColor::new(50, 120, 78),
+        good: SkinColor::new(102, 187, 135),
+        warning: SkinColor::new(216, 124, 0),
+        high: SkinColor::new(216, 22, 8),
+    },
+};

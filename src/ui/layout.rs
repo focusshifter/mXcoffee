@@ -48,6 +48,7 @@ pub struct DashboardLayout {
     pub graph: GraphLayout,
     pub pressure_bar: RectSpec,
     pub status: RectSpec,
+    pub status_secondary: Option<RectSpec>,
     pub status_left: Point,
     pub status_right: Point,
     pub debug_origin: Point,
@@ -84,6 +85,7 @@ pub const CLASSIC_LAYOUT: DashboardLayout = DashboardLayout {
     },
     pressure_bar: RectSpec::new(280, 90, 30, 121),
     status: RectSpec::new(0, 220, 320, 20),
+    status_secondary: None,
     status_left: Point::new(4, 222),
     status_right: Point::new(316, 222),
     debug_origin: Point::new(10, 100),
@@ -120,6 +122,7 @@ pub const WORKSHOP_LAYOUT: DashboardLayout = DashboardLayout {
     },
     pressure_bar: RectSpec::new(266, 92, 44, 119),
     status: CLASSIC_LAYOUT.status,
+    status_secondary: None,
     status_left: CLASSIC_LAYOUT.status_left,
     status_right: CLASSIC_LAYOUT.status_right,
     debug_origin: Point::new(18, 102),
@@ -156,10 +159,48 @@ pub const ALCHEMY_LAYOUT: DashboardLayout = DashboardLayout {
     },
     pressure_bar: RectSpec::new(23, 64, 16, 137),
     status: RectSpec::new(46, 212, 230, 18),
+    status_secondary: None,
     status_left: Point::new(50, 213),
     status_right: Point::new(272, 213),
     debug_origin: Point::new(59, 127),
     frame_indicator: RectSpec::new(314, 235, 4, 4),
+};
+
+pub const NGE_LAYOUT: DashboardLayout = DashboardLayout {
+    panels: [
+        PanelLayout {
+            frame: RectSpec::new(223, 26, 92, 56),
+            inner: RectSpec::new(225, 36, 88, 37),
+            header: Point::new(225, 27),
+            value_right: 309,
+            value_y: 43,
+        },
+        PanelLayout {
+            frame: RectSpec::new(135, 26, 85, 56),
+            inner: RectSpec::new(137, 36, 81, 37),
+            header: Point::new(137, 27),
+            value_right: 214,
+            value_y: 39,
+        },
+        PanelLayout {
+            frame: RectSpec::new(44, 26, 87, 56),
+            inner: RectSpec::new(46, 36, 83, 37),
+            header: Point::new(46, 27),
+            value_right: 125,
+            value_y: 43,
+        },
+    ],
+    graph: GraphLayout {
+        plot: RectSpec::new(63, 105, 215, 77),
+        clear: RectSpec::new(63, 105, 215, 77),
+    },
+    pressure_bar: RectSpec::new(17, 38, 12, 150),
+    status: RectSpec::new(76, 215, 77, 15),
+    status_secondary: Some(RectSpec::new(159, 215, 70, 15)),
+    status_left: Point::new(118, 215),
+    status_right: Point::new(225, 215),
+    debug_origin: Point::new(65, 107),
+    frame_indicator: RectSpec::new(316, 236, 4, 4),
 };
 
 impl DashboardLayout {
@@ -177,6 +218,7 @@ impl DashboardLayout {
             && inside(self.graph.clear)
             && inside(self.pressure_bar)
             && inside(self.status)
+            && self.status_secondary.map_or(true, inside)
             && inside(self.frame_indicator)
     }
 }

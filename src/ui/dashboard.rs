@@ -31,16 +31,20 @@ where
                 .into_styled(PrimitiveStyle::with_fill(skin.theme.panel_inner.render))
                 .draw(target)?;
         }
-        font.draw(
-            target,
-            header,
-            panel.header,
-            skin.theme.panel_label.source,
-            match skin.chrome {
-                ChromeStyle::Flat => skin.theme.panel.source,
-                ChromeStyle::Alchemy(_) => skin.theme.screen.source,
-            },
-        )?;
+        if !matches!(skin.chrome, ChromeStyle::AuthoredUnderlay(_)) {
+            font.draw(
+                target,
+                header,
+                panel.header,
+                skin.theme.panel_label.source,
+                match skin.chrome {
+                    ChromeStyle::Flat => skin.theme.panel.source,
+                    ChromeStyle::Alchemy(_) | ChromeStyle::AuthoredUnderlay(_) => {
+                        skin.theme.screen.source
+                    }
+                },
+            )?;
+        }
     }
     Ok(())
 }
@@ -77,20 +81,22 @@ pub(super) fn draw_graph_background<T>(target: &mut T, skin: &Skin) -> Result<()
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    let ChromeStyle::Alchemy(chrome) = skin.chrome else {
-        return Ok(());
+    let grid = match skin.chrome {
+        ChromeStyle::Alchemy(chrome) => chrome.grid,
+        ChromeStyle::AuthoredUnderlay(chrome) => chrome.grid,
+        ChromeStyle::Flat => return Ok(()),
     };
     let plot = skin.layout.graph.plot;
     for division in 1..4 {
         let y = plot.y + division * (plot.height as i32 - 1) / 4;
         for x in (plot.x..plot.x + plot.width as i32).step_by(4) {
-            Pixel(Point::new(x, y), chrome.grid.render).draw(target)?;
+            Pixel(Point::new(x, y), grid.render).draw(target)?;
         }
     }
     for division in 1..6 {
         let x = plot.x + division * (plot.width as i32 - 1) / 6;
         for y in (plot.y..plot.y + plot.height as i32).step_by(4) {
-            Pixel(Point::new(x, y), chrome.grid.render).draw(target)?;
+            Pixel(Point::new(x, y), grid.render).draw(target)?;
         }
     }
     Ok(())
@@ -147,7 +153,7 @@ where
     let small = VlwFont::new(skin.assets.fonts.small).unwrap();
     let primary = VlwFont::new(match skin.chrome {
         ChromeStyle::Flat => skin.assets.fonts.numeric,
-        ChromeStyle::Alchemy(_) => skin.assets.fonts.medium,
+        ChromeStyle::Alchemy(_) | ChromeStyle::AuthoredUnderlay(_) => skin.assets.fonts.medium,
     })
     .unwrap();
     let mut value: String<16> = String::new();
@@ -217,32 +223,47 @@ where
 {
     let status_fill = match skin.chrome {
         ChromeStyle::Flat => skin.theme.panel.render,
-        ChromeStyle::Alchemy(_) => skin.theme.screen.render,
+        ChromeStyle::Alchemy(_) | ChromeStyle::AuthoredUnderlay(_) => skin.theme.screen.render,
     };
     skin.layout
         .status
         .rectangle()
         .into_styled(PrimitiveStyle::with_fill(status_fill))
         .draw(target)?;
+    if let Some(status_secondary) = skin.layout.status_secondary {
+        status_secondary
+            .rectangle()
+            .into_styled(PrimitiveStyle::with_fill(status_fill))
+            .draw(target)?;
+    }
     let font = VlwFont::new(skin.assets.fonts.small).unwrap();
     font.draw(
         target,
-        if data.bluetooth_on { "BT ON" } else { "BT OFF" },
+        match (skin.chrome, data.bluetooth_on) {
+            (ChromeStyle::AuthoredUnderlay(_), true) => "ON",
+            (ChromeStyle::AuthoredUnderlay(_), false) => "OFF",
+            (_, true) => "BT ON",
+            (_, false) => "BT OFF",
+        },
         skin.layout.status_left,
         skin.theme.status_text.source,
         match skin.chrome {
             ChromeStyle::Flat => skin.theme.panel.source,
-            ChromeStyle::Alchemy(_) => skin.theme.screen.source,
+            ChromeStyle::Alchemy(_) | ChromeStyle::AuthoredUnderlay(_) => skin.theme.screen.source,
         },
     )?;
 
     let mut scale: String<40> = String::new();
     if data.scale_connected {
-        if matches!(skin.chrome, ChromeStyle::Alchemy(_)) {
+        if matches!(skin.chrome, ChromeStyle::AuthoredUnderlay(_)) {
+            scale.push_str("LINKED").ok();
+        } else if matches!(skin.chrome, ChromeStyle::Alchemy(_)) {
             scale.push_str("SCALE LINKED").ok();
         } else {
             write!(&mut scale, "Scale: {}", data.scale_name).ok();
         }
+    } else if matches!(skin.chrome, ChromeStyle::AuthoredUnderlay(_)) {
+        scale.push_str("--").ok();
     } else if matches!(skin.chrome, ChromeStyle::Alchemy(_)) {
         scale.push_str("SCALE --").ok();
     } else {
@@ -256,7 +277,7 @@ where
         skin.theme.status_text.source,
         match skin.chrome {
             ChromeStyle::Flat => skin.theme.panel.source,
-            ChromeStyle::Alchemy(_) => skin.theme.screen.source,
+            ChromeStyle::Alchemy(_) | ChromeStyle::AuthoredUnderlay(_) => skin.theme.screen.source,
         },
     )?;
     Ok(())

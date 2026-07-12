@@ -9,11 +9,16 @@ pub mod skin;
 mod splash;
 pub mod theme;
 
-pub use skin::{Skin, SkinId, ALCHEMY, CLASSIC, WORKSHOP};
+pub use skin::{Skin, SkinId, ALCHEMY, CLASSIC, NGE, WORKSHOP};
 
-#[cfg(feature = "alchemy-skin")]
+#[cfg(all(feature = "alchemy-skin", feature = "nge-skin"))]
+compile_error!("select only one default skin feature");
+
+#[cfg(all(feature = "alchemy-skin", not(feature = "nge-skin")))]
 pub const DEFAULT_SKIN: &Skin = &ALCHEMY;
-#[cfg(not(feature = "alchemy-skin"))]
+#[cfg(feature = "nge-skin")]
+pub const DEFAULT_SKIN: &Skin = &NGE;
+#[cfg(not(any(feature = "alchemy-skin", feature = "nge-skin")))]
 pub const DEFAULT_SKIN: &Skin = &CLASSIC;
 
 use dashboard::{
@@ -294,7 +299,7 @@ mod tests {
 
     #[test]
     fn skin_definitions_are_valid_and_distinct() {
-        for skin in [&CLASSIC, &WORKSHOP, &ALCHEMY] {
+        for skin in [&CLASSIC, &WORKSHOP, &ALCHEMY, &NGE] {
             assert!(skin.layout.is_valid(WIDTH, HEIGHT));
             assert!(skin.assets.backdrop.is_none_or(|asset| {
                 asset.is_valid()
@@ -311,6 +316,8 @@ mod tests {
         assert_ne!(CLASSIC.layout, WORKSHOP.layout);
         assert_ne!(WORKSHOP.theme, ALCHEMY.theme);
         assert_ne!(WORKSHOP.layout, ALCHEMY.layout);
+        assert_ne!(ALCHEMY.theme, NGE.theme);
+        assert_ne!(ALCHEMY.layout, NGE.layout);
     }
 
     #[test]
@@ -326,6 +333,10 @@ mod tests {
         assert_eq!(
             framebuffer_checksum(&render_reference(&ALCHEMY)),
             1_939_580_656_284_526_128
+        );
+        assert_eq!(
+            framebuffer_checksum(&render_reference(&NGE)),
+            8_731_270_326_801_396_832
         );
     }
 
@@ -528,6 +539,20 @@ mod tests {
             &mut FastFrameBuffer::new(&mut switched, WIDTH as usize, HEIGHT as usize),
             reference_data(&pressure, &weight, &times, false),
             &ALCHEMY,
+        )
+        .unwrap();
+        assert_eq!(switched, expected);
+
+        let expected = render_reference(&NGE);
+        initialize_main_screen_with_skin(
+            &mut FastFrameBuffer::new(&mut switched, WIDTH as usize, HEIGHT as usize),
+            &NGE,
+        )
+        .unwrap();
+        draw_main_screen_retained_with_skin(
+            &mut FastFrameBuffer::new(&mut switched, WIDTH as usize, HEIGHT as usize),
+            reference_data(&pressure, &weight, &times, false),
+            &NGE,
         )
         .unwrap();
         assert_eq!(switched, expected);
