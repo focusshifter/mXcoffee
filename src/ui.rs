@@ -1,12 +1,14 @@
 use core::fmt::Write as _;
 
-use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10, FONT_9X18_BOLD};
+use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, Rgb888};
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Line, PrimitiveStyle, Rectangle};
-use embedded_graphics::text::{Alignment, Baseline, Text, TextStyleBuilder};
+use embedded_graphics::text::{Alignment, Text};
 use heapless::String;
+
+use crate::vlw::VlwFont;
 
 pub const WIDTH: i32 = 320;
 pub const HEIGHT: i32 = 240;
@@ -20,6 +22,9 @@ const GRAPH_HEIGHT: i32 = 120;
 const BAR_X: i32 = 280;
 const BAR_WIDTH: u32 = 30;
 
+const MOON_GLOSS_16: &[u8] = include_bytes!("../assets/fonts/MoonGloss_16.vlw");
+const MOON_GLOSS_48: &[u8] = include_bytes!("../assets/fonts/MoonGloss_48_Numeric.vlw");
+
 const DARK_BG: Rgb565 = rgb(0x03, 0x16, 0x1e);
 const ACCENT_BG: Rgb565 = rgb(0x96, 0xcb, 0xbb);
 const ACCENT_TEXT: Rgb565 = rgb(0x0a, 0x3b, 0x44);
@@ -27,6 +32,10 @@ const PANEL_TEXT: Rgb565 = rgb(0xdd, 0xfe, 0xee);
 const GRAPH_GOOD: Rgb565 = rgb(0xbd, 0xff, 0xff);
 const GRAPH_WARNING: Rgb565 = rgb(0xd6, 0xa6, 0x7b);
 const BAR_BG: Rgb565 = rgb(0x0a, 0x3b, 0x44);
+
+const ACCENT_BG_SOURCE: Rgb888 = Rgb888::new(0x96, 0xcb, 0xbb);
+const ACCENT_TEXT_SOURCE: Rgb888 = Rgb888::new(0x0a, 0x3b, 0x44);
+const PANEL_TEXT_SOURCE: Rgb888 = Rgb888::new(0xdd, 0xfe, 0xee);
 
 const fn rgb(red: u8, green: u8, blue: u8) -> Rgb565 {
     Rgb565::new(red >> 3, green >> 2, blue >> 3)
@@ -51,43 +60,7 @@ pub struct UiData<'a> {
     pub now_ms: u64,
     pub auto_off_timeout_ms: u64,
     pub timer_running: bool,
-    pub frame_indicator: bool,
-}
-
-struct Scale2x<'a, T> {
-    target: &'a mut T,
-}
-
-impl<T> Dimensions for Scale2x<'_, T>
-where
-    T: DrawTarget<Color = Rgb565>,
-{
-    fn bounding_box(&self) -> Rectangle {
-        let bounds = self.target.bounding_box();
-        Rectangle::new(
-            bounds.top_left / 2,
-            Size::new(bounds.size.width / 2, bounds.size.height / 2),
-        )
-    }
-}
-
-impl<T> DrawTarget for Scale2x<'_, T>
-where
-    T: DrawTarget<Color = Rgb565>,
-{
-    type Color = Rgb565;
-    type Error = T::Error;
-
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for Pixel(point, color) in pixels {
-            self.target
-                .fill_solid(&Rectangle::new(point * 2, Size::new(2, 2)), color)?;
-        }
-        Ok(())
-    }
+    pub frame_indicator: Option<bool>,
 }
 
 pub fn draw_main_screen<T>(target: &mut T, data: UiData<'_>) -> Result<(), T::Error>
@@ -138,14 +111,16 @@ where
         draw_debug_overlay(target, &data)?;
     }
 
-    let indicator = if data.frame_indicator {
-        Rgb565::WHITE
-    } else {
-        Rgb565::RED
-    };
-    Rectangle::new(Point::new(WIDTH - 4, HEIGHT - 4), Size::new(4, 4))
-        .into_styled(PrimitiveStyle::with_fill(indicator))
-        .draw(target)?;
+    if let Some(frame_indicator) = data.frame_indicator {
+        let indicator = if frame_indicator {
+            Rgb565::WHITE
+        } else {
+            Rgb565::RED
+        };
+        Rectangle::new(Point::new(WIDTH - 4, HEIGHT - 4), Size::new(4, 4))
+            .into_styled(PrimitiveStyle::with_fill(indicator))
+            .draw(target)?;
+    }
     Ok(())
 }
 
@@ -165,6 +140,7 @@ fn draw_panel_frames<T>(target: &mut T) -> Result<(), T::Error>
 where
     T: DrawTarget<Color = Rgb565>,
 {
+    let font = VlwFont::new(MOON_GLOSS_16).unwrap();
     for (x, header) in [(0, "SHOT TIME"), (110, "WEIGHT G"), (220, "PRESSURE")] {
         Rectangle::new(Point::new(x, 0), Size::new(100, 80))
             .into_styled(PrimitiveStyle::with_fill(ACCENT_BG))
@@ -172,13 +148,13 @@ where
         Rectangle::new(Point::new(x + 2, 18), Size::new(96, 60))
             .into_styled(PrimitiveStyle::with_fill(ACCENT_TEXT))
             .draw(target)?;
-        Text::with_text_style(
+        font.draw(
+            target,
             header,
             Point::new(x + 2, 2),
-            MonoTextStyle::new(&FONT_6X10, ACCENT_TEXT),
-            TextStyleBuilder::new().baseline(Baseline::Top).build(),
-        )
-        .draw(target)?;
+            ACCENT_TEXT_SOURCE,
+            ACCENT_BG_SOURCE,
+        )?;
     }
     Ok(())
 }
@@ -193,8 +169,8 @@ where
             .draw(target)?;
     }
 
-    let normal = MonoTextStyle::new(&FONT_10X20, PANEL_TEXT);
-    let small = MonoTextStyle::new(&FONT_6X10, PANEL_TEXT);
+    let small = VlwFont::new(MOON_GLOSS_16).unwrap();
+    let large = VlwFont::new(MOON_GLOSS_48).unwrap();
 
     let mut value: String<16> = String::new();
     write!(
@@ -204,20 +180,35 @@ where
         data.shot_time_tenths % 10
     )
     .ok();
-    Text::with_alignment(
+    large.draw_right(
+        target,
         &value,
-        Point::new(46, 31),
-        MonoTextStyle::new(&FONT_9X18_BOLD, PANEL_TEXT),
-        Alignment::Right,
-    )
-    .draw(&mut Scale2x { target })?;
+        92,
+        25,
+        PANEL_TEXT_SOURCE,
+        ACCENT_TEXT_SOURCE,
+    )?;
 
     value.clear();
     write!(&mut value, "{:.1}g", data.shot_weight).ok();
-    Text::with_alignment(&value, Point::new(200, 38), normal, Alignment::Right).draw(target)?;
+    small.draw_right(
+        target,
+        &value,
+        200,
+        30,
+        PANEL_TEXT_SOURCE,
+        ACCENT_TEXT_SOURCE,
+    )?;
     value.clear();
     write!(&mut value, "{:.1} g/s", data.flow_rate).ok();
-    Text::with_alignment(&value, Point::new(200, 60), small, Alignment::Right).draw(target)?;
+    small.draw_right(
+        target,
+        &value,
+        200,
+        50,
+        PANEL_TEXT_SOURCE,
+        ACCENT_TEXT_SOURCE,
+    )?;
 
     value.clear();
     write!(
@@ -227,13 +218,14 @@ where
         (data.last_pressure.max(0) % 1_000) / 100
     )
     .ok();
-    Text::with_alignment(
+    large.draw_right(
+        target,
         &value,
-        Point::new(156, 31),
-        MonoTextStyle::new(&FONT_9X18_BOLD, PANEL_TEXT),
-        Alignment::Right,
-    )
-    .draw(&mut Scale2x { target })?;
+        312,
+        25,
+        PANEL_TEXT_SOURCE,
+        ACCENT_TEXT_SOURCE,
+    )?;
     Ok(())
 }
 
@@ -244,29 +236,29 @@ where
     Rectangle::new(Point::new(0, 220), Size::new(320, 20))
         .into_styled(PrimitiveStyle::with_fill(ACCENT_BG))
         .draw(target)?;
-    let style = MonoTextStyle::new(&FONT_6X10, ACCENT_TEXT);
-    let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
-    Text::with_text_style(
+    let font = VlwFont::new(MOON_GLOSS_16).unwrap();
+    font.draw(
+        target,
         if data.bluetooth_on { "BT ON" } else { "BT OFF" },
-        Point::new(4, 224),
-        style,
-        text_style,
-    )
-    .draw(target)?;
+        Point::new(4, 222),
+        ACCENT_TEXT_SOURCE,
+        ACCENT_BG_SOURCE,
+    )?;
 
     let mut scale: String<40> = String::new();
     if data.scale_connected {
-        write!(&mut scale, "SCALE: {}", data.scale_name).ok();
+        write!(&mut scale, "Scale: {}", data.scale_name).ok();
     } else {
-        scale.push_str("SCALE: --").ok();
+        scale.push_str("Scale: --").ok();
     }
-    Text::with_text_style(
+    font.draw_right(
+        target,
         &scale,
-        Point::new(123, 224),
-        style,
-        TextStyleBuilder::new().baseline(Baseline::Top).build(),
-    )
-    .draw(target)?;
+        316,
+        222,
+        ACCENT_TEXT_SOURCE,
+        ACCENT_BG_SOURCE,
+    )?;
     Ok(())
 }
 
@@ -303,16 +295,51 @@ where
             GRAPH_Y + GRAPH_HEIGHT - value * GRAPH_HEIGHT / max_value,
         )
     };
-    let line = PrimitiveStyle::with_stroke(color, 1);
     let mut previous = point(0);
     for index in 1..count {
         let current = point(index);
-        Line::new(previous, current)
-            .into_styled(line)
-            .draw(target)?;
+        draw_m5_line(target, previous, current, color)?;
         previous = current;
     }
     Ok(())
+}
+
+fn draw_m5_line<T>(
+    target: &mut T,
+    mut start: Point,
+    mut end: Point,
+    color: Rgb565,
+) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    let steep = (end.y - start.y).abs() > (end.x - start.x).abs();
+    if steep {
+        core::mem::swap(&mut start.x, &mut start.y);
+        core::mem::swap(&mut end.x, &mut end.y);
+    }
+    if start.x > end.x {
+        core::mem::swap(&mut start, &mut end);
+    }
+
+    let delta_y = (end.y - start.y).abs();
+    let y_step = if end.y > start.y { 1 } else { -1 };
+    let delta_x = end.x - start.x;
+    let mut error = delta_x >> 1;
+    let mut y = start.y;
+    target.draw_iter((start.x..=end.x).map(|x| {
+        let point = if steep {
+            Point::new(y, x)
+        } else {
+            Point::new(x, y)
+        };
+        error -= delta_y;
+        if error < 0 {
+            error += delta_x;
+            y += y_step;
+        }
+        Pixel(point, color)
+    }))
 }
 
 fn draw_pressure_bar<T>(target: &mut T, pressure: i16, max_value: i32) -> Result<(), T::Error>
@@ -424,25 +451,17 @@ pub fn build_reference_histories(
 fn gradient_color_for_pressure(pressure: i32) -> Rgb565 {
     if pressure <= 6_000 {
         let gray = map(pressure, 0, 6_000, 64, 96).clamp(0, 255) as u8;
-        Rgb565::from(Rgb888::new(gray, gray, gray))
+        rgb(gray, gray, gray)
     } else if pressure <= 7_000 {
         let gray = map(pressure, 6_000, 7_000, 96, 0).clamp(0, 255) as u8;
         let green = map(pressure, 6_000, 7_000, 96, 255).clamp(0, 255) as u8;
-        Rgb565::from(Rgb888::new(gray, green, gray))
+        rgb(gray, green, gray)
     } else if pressure <= 8_000 {
         Rgb565::GREEN
     } else if pressure <= 8_500 {
-        Rgb565::from(Rgb888::new(
-            map(pressure, 8_000, 8_500, 0, 255) as u8,
-            255,
-            0,
-        ))
+        rgb(map(pressure, 8_000, 8_500, 0, 255) as u8, 255, 0)
     } else if pressure <= 10_000 {
-        Rgb565::from(Rgb888::new(
-            255,
-            map(pressure, 8_500, 10_000, 255, 0) as u8,
-            0,
-        ))
+        rgb(255, map(pressure, 8_500, 10_000, 255, 0) as u8, 0)
     } else {
         Rgb565::RED
     }
@@ -482,7 +501,7 @@ mod tests {
             now_ms: 0,
             auto_off_timeout_ms: 600_000,
             timer_running: true,
-            frame_indicator,
+            frame_indicator: Some(frame_indicator),
         }
     }
 
@@ -529,7 +548,7 @@ mod tests {
                 now_ms: 0,
                 auto_off_timeout_ms: 600_000,
                 timer_running: true,
-                frame_indicator: true,
+                frame_indicator: Some(true),
             },
         )
         .unwrap();

@@ -229,6 +229,25 @@ seconds after startup, allowing unattended capture of a populated demo graph
 after a serial reset.
 No SPIFFS partition or C++ screenshot wrapper is involved.
 
+## MoonGloss VLW Rendering
+
+The dashboard uses the same MoonGloss 16 and MoonGloss 48 VLW glyph bitmaps as
+the C++ M5GFX implementation. `src/vlw.rs` is a pure-Rust port of the relevant
+M5GFX VLW path: it parses the big-endian header and glyph records, renders the
+8-bit antialiasing bitmap, preserves M5GFX's distinct measured and rendered
+space advances, and reproduces its RGB888-to-RGB565 alpha blending.
+
+MoonGloss 16 retains the full printable ASCII set because Bluetooth scale names
+are dynamic. MoonGloss 48 is subset to `0-9` and `.` because it is used only by
+the nonnegative shot-time and pressure fields. This reduces embedded font data
+from 69 KB to 17 KB and keeps the release image within the application
+partition.
+
+`scripts/render-ui-reference.sh` renders the Rust dashboard and requires exact
+pixel equality with the C++ screenshot oracle. The 2026-07-12 parity result is
+RMSE `0 (0)` across the complete 320x240 frame. The static oracle omits the
+Rust runtime's 4x4 blinking frame heartbeat; runtime screenshots retain it.
+
 ## Diagnostic Builds
 
 - `--features benchmark` prints full-frame, render, pipeline, worker-upload,

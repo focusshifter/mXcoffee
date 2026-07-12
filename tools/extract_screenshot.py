@@ -46,9 +46,12 @@ def rgb565_to_bmp(width, height, pixels):
         row = bytearray()
         for x in range(width):
             value = struct.unpack_from("<H", pixels, (y * width + x) * 2)[0]
-            red = ((value >> 11) & 0x1F) * 255 // 31
-            green = ((value >> 5) & 0x3F) * 255 // 63
-            blue = (value & 0x1F) * 255 // 31
+            red5 = (value >> 11) & 0x1F
+            green6 = (value >> 5) & 0x3F
+            blue5 = value & 0x1F
+            red = (red5 << 3) | (red5 >> 2)
+            green = (green6 << 2) | (green6 >> 4)
+            blue = (blue5 << 3) | (blue5 >> 2)
             row.extend((blue, green, red))
         output.extend(row)
         output.extend(padding)

@@ -843,7 +843,7 @@ fn main() {
             now_ms: now,
             auto_off_timeout_ms: AUTO_OFF_TIMEOUT_MS,
             timer_running: state.session.timer_running,
-            frame_indicator: state.frame_indicator,
+            frame_indicator: Some(state.frame_indicator),
         };
 
         #[cfg(feature = "benchmark")]
@@ -1113,7 +1113,7 @@ fn run_display_benchmarks<SPI, DC, CS>(
             now_ms: iteration as u64 * 20,
             auto_off_timeout_ms: AUTO_OFF_TIMEOUT_MS,
             timer_running: true,
-            frame_indicator: iteration % 2 == 0,
+            frame_indicator: Some(iteration % 2 == 0),
         };
 
         let frame_started = display_interface::monotonic_time_us();

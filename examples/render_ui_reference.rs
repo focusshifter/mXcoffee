@@ -40,7 +40,7 @@ fn main() {
             now_ms: 0,
             auto_off_timeout_ms: 600_000,
             timer_running: true,
-            frame_indicator: true,
+            frame_indicator: None,
         },
     )
     .unwrap();
@@ -74,9 +74,9 @@ fn write_bmp(path: &str, pixels: &[Rgb565]) -> std::io::Result<()> {
             let green = ((raw >> 5) & 0x3f) as u8;
             let blue = (raw & 0x1f) as u8;
             writer.write_all(&[
-                (u16::from(blue) * 255 / 31) as u8,
-                (u16::from(green) * 255 / 63) as u8,
-                (u16::from(red) * 255 / 31) as u8,
+                (blue << 3) | (blue >> 2),
+                (green << 2) | (green >> 4),
+                (red << 3) | (red >> 2),
             ])?;
         }
         writer.write_all(&padding)?;

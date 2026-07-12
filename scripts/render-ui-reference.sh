@@ -17,3 +17,8 @@ fi
 metric=$(compare -metric RMSE "$cpp_reference" "$rust_reference" null: 2>&1 || true)
 printf 'C++ reference: %s\nRust reference: %s\nRMSE: %s\n' \
   "$cpp_reference" "$rust_reference" "$metric"
+
+if [[ "$metric" != "0 (0)" ]]; then
+  printf 'UI reference differs from C++ oracle\n' >&2
+  exit 1
+fi

@@ -9,3 +9,4 @@ pub mod scale_protocol;
 pub mod screenshot;
 pub mod session;
 pub mod ui;
+pub mod vlw;
