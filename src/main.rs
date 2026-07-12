@@ -31,7 +31,11 @@ use mipidsi::{models::ILI9342CRgb565, Builder};
 use mxcoffee::fast_framebuffer::{clear_black, FastFrameBuffer};
 use mxcoffee::session::SessionState;
 use mxcoffee::ui::{draw_center_message, draw_main_screen, UiData};
+#[cfg(feature = "benchmark-soak")]
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError, TrySendError};
+#[cfg(feature = "benchmark-soak")]
+use std::sync::Arc;
 
 const AXP2101_ADDR: u8 = 0x34;
 const DISPLAY_WIDTH: usize = 320;
@@ -369,8 +373,14 @@ fn main() {
     let mut demo_scale = mxcoffee::demo::SimulatedScale::default();
     let mut framebuffer = Box::new([Rgb565::BLACK; PIXEL_COUNT]);
 
-    #[cfg(feature = "benchmark")]
+    #[cfg(all(feature = "benchmark", not(feature = "benchmark-soak")))]
     run_display_benchmarks(&mut display_interface, framebuffer.as_mut());
+    ble_server.start_scale_worker();
+
+    #[cfg(feature = "benchmark-soak")]
+    let display_errors = Arc::new(AtomicU32::new(0));
+    #[cfg(feature = "benchmark-soak")]
+    let worker_display_errors = display_errors.clone();
 
     let (frame_tx, frame_rx) = sync_channel::<OwnedFrameBuffer>(2);
     let (available_tx, available_rx) = sync_channel::<OwnedFrameBuffer>(3);
@@ -405,6 +415,8 @@ fn main() {
                         #[cfg(feature = "benchmark")]
                         let upload_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
                         if let Err(err) = display_interface.send_frame_queued(frame.as_ref()) {
+                            #[cfg(feature = "benchmark-soak")]
+                            worker_display_errors.fetch_add(1, Ordering::Relaxed);
                             println!("Display update failed: {err:?}");
                         }
                         #[cfg(feature = "benchmark")]
@@ -430,7 +442,7 @@ fn main() {
                         }
                         frames_until_pause -= 1;
                         if frames_until_pause == 0 {
-                            FreeRtos::delay_ms(1);
+                            FreeRtos::delay_ms(2);
                             frames_until_pause = 4;
                         }
                     }
@@ -464,6 +476,20 @@ fn main() {
         "frame_exchange",
         PIXEL_COUNT * 2,
     ));
+    #[cfg(feature = "benchmark-soak")]
+    let soak_started_ms = now_ms();
+    #[cfg(feature = "benchmark-soak")]
+    let mut soak_stats = Box::new(mxcoffee::benchmark::LongRunStats::new());
+    #[cfg(feature = "benchmark-soak")]
+    let mut soak_next_report_ms = soak_started_ms + 10_000;
+    #[cfg(feature = "benchmark-soak")]
+    let mut soak_heap_baseline = None;
+    #[cfg(feature = "benchmark-soak")]
+    let mut soak_pressure_notify_attempts = 0u64;
+    #[cfg(feature = "benchmark-soak")]
+    let mut soak_pressure_notify_successes = 0u64;
+    #[cfg(feature = "benchmark-soak")]
+    let mut soak_completed = false;
 
     loop {
         #[cfg(feature = "benchmark")]
@@ -534,7 +560,10 @@ fn main() {
             unsafe { esp_idf_sys::esp_restart() };
         }
 
-        if !state.is_asleep && now.saturating_sub(state.last_activity_ms) >= AUTO_OFF_TIMEOUT_MS {
+        if !cfg!(feature = "benchmark-soak")
+            && !state.is_asleep
+            && now.saturating_sub(state.last_activity_ms) >= AUTO_OFF_TIMEOUT_MS
+        {
             set_core2_backlight(&mut internal_i2c, false).ok();
             state.is_asleep = true;
             continue;
@@ -549,24 +578,35 @@ fn main() {
         state.frame_indicator = !state.frame_indicator;
 
         #[cfg(feature = "demo")]
-        let pressure = mxcoffee::demo::simulated_pressure_mbar(now.saturating_sub(demo_started_ms));
+        let (pressure, pressure_sample_valid) = (
+            mxcoffee::demo::simulated_pressure_mbar(now.saturating_sub(demo_started_ms)),
+            true,
+        );
 
         #[cfg(not(feature = "demo"))]
-        let pressure = if !state.pressure_available {
-            state.last_pressure.unwrap_or(0)
+        let (pressure, pressure_sample_valid) = if !state.pressure_available {
+            (state.last_pressure.unwrap_or(0), false)
         } else {
             match pressure_sensor.read_pressure_mbar(&mut pressure_i2c) {
-                Ok(value) => value,
+                Ok(value) => (value, true),
                 Err(err) => {
                     if now.saturating_sub(state.last_pressure_error_log_ms) >= 1_000 {
                         println!("Pressure read failed: {err:?}");
                         state.last_pressure_error_log_ms = now;
                     }
                     state.pressure_available = false;
-                    state.last_pressure.unwrap_or(0)
+                    (state.last_pressure.unwrap_or(0), false)
                 }
             }
         };
+
+        #[cfg(not(feature = "benchmark-soak"))]
+        let _ = pressure_sample_valid;
+
+        #[cfg(feature = "benchmark-soak")]
+        if pressure_sample_valid {
+            soak_stats.record_pressure_sample(now);
+        }
 
         if state.last_pressure.map(|p| p != pressure).unwrap_or(true) {
             state.record_activity(now);
@@ -610,7 +650,16 @@ fn main() {
 
         state.bt_connected = ble_server.is_connected();
         state.last_bt_send_successful = if state.bluetooth_on {
-            ble_server.notify_pressure(pressure)
+            #[cfg(feature = "benchmark-soak")]
+            if state.bt_connected {
+                soak_pressure_notify_attempts = soak_pressure_notify_attempts.saturating_add(1);
+            }
+            let notified = ble_server.notify_pressure(pressure);
+            #[cfg(feature = "benchmark-soak")]
+            if state.bt_connected && notified {
+                soak_pressure_notify_successes = soak_pressure_notify_successes.saturating_add(1);
+            }
+            notified
         } else {
             false
         };
@@ -688,6 +737,8 @@ fn main() {
 
         let frame_end = now_ms();
         let frame_duration = frame_end.saturating_sub(frame_start);
+        #[cfg(feature = "benchmark-soak")]
+        soak_stats.record_frame(frame_duration);
         state.frame_accum_ms = state.frame_accum_ms.saturating_add(frame_duration);
         state.frame_counter = state.frame_counter.saturating_add(1);
         if state.frame_accum_ms >= 1_000 {
@@ -718,11 +769,71 @@ fn main() {
             }
         }
 
+        #[cfg(feature = "benchmark-soak")]
+        if frame_end >= soak_next_report_ms {
+            let elapsed_ms = frame_end.saturating_sub(soak_started_ms).max(1);
+            let heap = display_interface::heap_metrics();
+            if elapsed_ms >= 60_000 && soak_heap_baseline.is_none() {
+                soak_heap_baseline = Some(heap);
+            }
+            let internal_heap_loss = soak_heap_baseline.map_or(0, |baseline| {
+                baseline.internal_free.saturating_sub(heap.internal_free)
+            });
+            let psram_heap_loss = soak_heap_baseline.map_or(0, |baseline| {
+                baseline.psram_free.saturating_sub(heap.psram_free)
+            });
+            let pressure_hz_x100 = soak_stats
+                .pressure_samples()
+                .saturating_mul(100_000)
+                .checked_div(elapsed_ms)
+                .unwrap_or(0);
+            let notification_loss =
+                soak_pressure_notify_attempts.saturating_sub(soak_pressure_notify_successes);
+            println!(
+                concat!(
+                    "{{\"type\":\"soak\",\"elapsed_ms\":{},\"frames\":{},",
+                    "\"frame_p50_ms\":{},\"frame_p95_ms\":{},\"frame_p99_ms\":{},",
+                    "\"pressure_samples\":{},\"pressure_hz\":{}.{:02},",
+                    "\"max_pressure_gap_ms\":{},\"pressure_notify_attempts\":{},",
+                    "\"pressure_notify_loss\":{},\"scale_samples\":{},",
+                    "\"display_errors\":{},\"internal_free\":{},",
+                    "\"internal_minimum_free\":{},\"internal_loss_after_warmup\":{},",
+                    "\"psram_free\":{},\"psram_minimum_free\":{},",
+                    "\"psram_loss_after_warmup\":{}}}"
+                ),
+                elapsed_ms,
+                soak_stats.frames(),
+                soak_stats.percentile_ms(50),
+                soak_stats.percentile_ms(95),
+                soak_stats.percentile_ms(99),
+                soak_stats.pressure_samples(),
+                pressure_hz_x100 / 100,
+                pressure_hz_x100 % 100,
+                soak_stats.max_pressure_gap_ms(),
+                soak_pressure_notify_attempts,
+                notification_loss,
+                ble_server.scale_sample_count(),
+                display_errors.load(Ordering::Relaxed),
+                heap.internal_free,
+                heap.internal_minimum_free,
+                internal_heap_loss,
+                heap.psram_free,
+                heap.psram_minimum_free,
+                psram_heap_loss,
+            );
+            soak_next_report_ms = soak_next_report_ms.saturating_add(10_000);
+
+            if elapsed_ms >= 30 * 60 * 1_000 && !soak_completed {
+                println!("{{\"type\":\"soak_complete\",\"duration_ms\":{},\"display_errors\":{},\"pressure_notify_loss\":{},\"max_pressure_gap_ms\":{},\"internal_loss_after_warmup\":{},\"psram_loss_after_warmup\":{}}}", elapsed_ms, display_errors.load(Ordering::Relaxed), notification_loss, soak_stats.max_pressure_gap_ms(), internal_heap_loss, psram_heap_loss);
+                soak_completed = true;
+            }
+        }
+
         FreeRtos::delay_ms(2);
     }
 }
 
-#[cfg(feature = "benchmark")]
+#[cfg(all(feature = "benchmark", not(feature = "benchmark-soak")))]
 fn run_display_benchmarks<SPI, DC, CS>(
     display: &mut FastSpiInterface<'_, SPI, DC, CS>,
     framebuffer: &mut [Rgb565; PIXEL_COUNT],
@@ -805,7 +916,7 @@ fn run_display_benchmarks<SPI, DC, CS>(
     println!("{{\"type\":\"correctness\",\"name\":\"checkerboard_8px\",\"errors\":0}}");
     FreeRtos::delay_ms(3_000);
 
-    #[cfg(feature = "benchmark-soak")]
+    #[cfg(feature = "benchmark-transfer-soak")]
     {
         for iteration in 0..1_000 {
             framebuffer.fill(if iteration % 2 == 0 {

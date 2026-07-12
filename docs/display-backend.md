@@ -143,7 +143,11 @@ Raw measurements live in
 
 - `--features benchmark` prints full-frame, render, pipeline, worker-upload,
   and completed-cadence statistics.
-- `--features benchmark-soak` adds 1,000 alternating full-frame transfers.
+- `--features benchmark-transfer-soak` adds 1,000 alternating full-frame
+  transfers to the isolated benchmark matrix.
+- `--features demo,benchmark-soak` runs the pipelined application workload and
+  emits 10-second heap, PSRAM, frame, pressure, BLE, and display-error telemetry
+  for a 30-minute soak.
 - `--features demo` replaces only the physical pressure source with the C++
   firmware's simulated shot profile. It still exercises the production Rust
   session, graph, BLE notification, framebuffer queue, and DMA backend.

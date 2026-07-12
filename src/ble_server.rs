@@ -37,6 +37,7 @@ pub struct MxBleServer {
     pressure_characteristic: Characteristic,
     scale: Arc<Mutex<ScaleSnapshot>>,
     preferred_scale: Arc<Mutex<Option<LastScaleConfig>>>,
+    scale_worker_started: AtomicBool,
 }
 
 impl MxBleServer {
@@ -118,8 +119,8 @@ impl MxBleServer {
             pressure_characteristic,
             scale: Arc::new(Mutex::new(ScaleSnapshot::default())),
             preferred_scale: Arc::new(Mutex::new(preferred_scale)),
+            scale_worker_started: AtomicBool::new(false),
         });
-        Self::spawn_scale_worker(owner.clone(), device);
         Ok(owner)
     }
 
@@ -163,6 +164,18 @@ impl MxBleServer {
     #[cfg(not(feature = "demo"))]
     pub fn scale_snapshot(&self) -> ScaleSnapshot {
         self.scale.lock().unwrap().clone()
+    }
+
+    #[cfg(feature = "benchmark-soak")]
+    pub fn scale_sample_count(&self) -> u64 {
+        self.scale.lock().unwrap().samples
+    }
+
+    pub fn start_scale_worker(self: &Arc<Self>) {
+        if self.scale_worker_started.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        Self::spawn_scale_worker(self.clone(), BLEDevice::take());
     }
 
     fn spawn_scale_worker(owner: Arc<Self>, device: &'static BLEDevice) {

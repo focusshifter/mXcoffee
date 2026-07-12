@@ -14,6 +14,11 @@ use esp_idf_sys::{
     esp_timer_get_time, heap_caps_free, heap_caps_malloc, spi_device_acquire_bus,
     spi_device_handle_t, spi_device_release_bus, EspError, MALLOC_CAP_8BIT, MALLOC_CAP_DMA,
 };
+#[cfg(feature = "benchmark-soak")]
+use esp_idf_sys::{
+    heap_caps_get_free_size, heap_caps_get_minimum_free_size, MALLOC_CAP_INTERNAL,
+    MALLOC_CAP_SPIRAM,
+};
 use mipidsi::interface::{Interface, SpiError};
 
 const DMA_BUFFER_COUNT: usize = 2;
@@ -42,6 +47,29 @@ const SPI_OUT_RST: u32 = 1 << 3;
 const SPI_OUTLINK_START: u32 = 1 << 29;
 const SPI_OUTLINK_ADDR_MASK: u32 = 0x000F_FFFF;
 const DPORT_SPI_DMA_CHAN_SEL: *const u32 = 0x3FF0_05A8 as *const u32;
+
+#[cfg(feature = "benchmark-soak")]
+#[derive(Debug, Clone, Copy)]
+pub struct HeapMetrics {
+    pub internal_free: usize,
+    pub internal_minimum_free: usize,
+    pub psram_free: usize,
+    pub psram_minimum_free: usize,
+}
+
+#[cfg(feature = "benchmark-soak")]
+pub fn heap_metrics() -> HeapMetrics {
+    HeapMetrics {
+        internal_free: unsafe { heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) },
+        internal_minimum_free: unsafe {
+            heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+        },
+        psram_free: unsafe { heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) },
+        psram_minimum_free: unsafe {
+            heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+        },
+    }
+}
 
 unsafe extern "C" {
     fn spicommon_dmaworkaround_idle(dma_channel: i32);
