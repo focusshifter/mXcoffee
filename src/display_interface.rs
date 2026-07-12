@@ -198,6 +198,11 @@ pub struct FastSpiInterface<'a, SPI, DC, CS> {
     dma_buffers: [DmaBuffer; DMA_BUFFER_COUNT],
 }
 
+enum FrameBackendError<Pin> {
+    Timeout,
+    Pin(Pin),
+}
+
 unsafe impl<SPI: Send, DC: Send, CS: Send> Send for FastSpiInterface<'_, SPI, DC, CS> {}
 
 impl<'a, SPI: SpiDevice, DC: OutputPin, CS: OutputPin> FastSpiInterface<'a, SPI, DC, CS> {
@@ -234,19 +239,22 @@ where
     ) -> Result<(), FrameTransferError<SpiError<HalSpiError, DC::Error>>> {
         validate_frame_length(pixels.len()).map_err(FrameTransferError::InvalidFrameLength)?;
         self.send_frame_queued_inner(pixels)
-            .map_err(FrameTransferError::Transport)
     }
 
     fn send_frame_queued_inner(
         &mut self,
         pixels: &[Rgb565],
-    ) -> Result<(), SpiError<HalSpiError, DC::Error>> {
+    ) -> Result<(), FrameTransferError<SpiError<HalSpiError, DC::Error>>> {
         let bytes =
             unsafe { core::slice::from_raw_parts(pixels.as_ptr().cast::<u8>(), pixels.len() * 2) };
         esp_result(unsafe { spi_device_acquire_bus(self.raw_device, u32::MAX) })
             .map_err(HalSpiError::from)
-            .map_err(SpiError::Spi)?;
-        self.cs.set_low().map_err(SpiError::Dc)?;
+            .map_err(SpiError::Spi)
+            .map_err(FrameTransferError::Transport)?;
+        self.cs
+            .set_low()
+            .map_err(SpiError::Dc)
+            .map_err(FrameTransferError::Transport)?;
         unsafe {
             register(SPI_USER_OFFSET).write_volatile(SPI_USR_MOSI);
             register(SPI_PIN_OFFSET).write_volatile(SPI_DISABLE_ALL_CS);
@@ -254,24 +262,35 @@ where
         }
 
         let transfer_result = (|| {
-            self.write_raw(false, &[0x2A])?;
-            self.write_raw(true, &[0, 0, 0x01, 0x3F])?;
-            self.write_raw(false, &[0x2B])?;
-            self.write_raw(true, &[0, 0, 0, 0xEF])?;
-            self.write_raw(false, &[0x2C])?;
+            let map_backend = |error| match error {
+                FrameBackendError::Timeout => FrameTransferError::Timeout,
+                FrameBackendError::Pin(error) => FrameTransferError::Transport(SpiError::Dc(error)),
+            };
+            self.write_raw(false, &[0x2A]).map_err(map_backend)?;
+            self.write_raw(true, &[0, 0, 0x01, 0x3F])
+                .map_err(map_backend)?;
+            self.write_raw(false, &[0x2B]).map_err(map_backend)?;
+            self.write_raw(true, &[0, 0, 0, 0xEF])
+                .map_err(map_backend)?;
+            self.write_raw(false, &[0x2C]).map_err(map_backend)?;
             self.wait_for_dma()
-                .map_err(HalSpiError::from)
-                .map_err(SpiError::Spi)?;
-            self.dc.set_high().map_err(SpiError::Dc)?;
+                .map_err(|_| FrameTransferError::Timeout)?;
+            self.dc
+                .set_high()
+                .map_err(SpiError::Dc)
+                .map_err(FrameTransferError::Transport)?;
             self.queue_bytes_locked(bytes)
-                .map_err(HalSpiError::from)
-                .map_err(SpiError::Spi)
+                .map_err(|_| FrameTransferError::Timeout)
         })();
 
         unsafe { register(SPI_DMA_OUT_LINK_OFFSET).write_volatile(0) };
         unsafe { spicommon_dmaworkaround_idle(self.dma_channel) };
         unsafe { spi_device_release_bus(self.raw_device) };
-        let cs_result = self.cs.set_high().map_err(SpiError::Dc);
+        let cs_result = self
+            .cs
+            .set_high()
+            .map_err(SpiError::Dc)
+            .map_err(FrameTransferError::Transport);
         transfer_result.and(cs_result)
     }
 
@@ -279,15 +298,14 @@ where
         &mut self,
         data_mode: bool,
         bytes: &[u8],
-    ) -> Result<(), SpiError<HalSpiError, DC::Error>> {
+    ) -> Result<(), FrameBackendError<DC::Error>> {
         debug_assert!(!bytes.is_empty() && bytes.len() <= 4);
         self.wait_for_dma()
-            .map_err(HalSpiError::from)
-            .map_err(SpiError::Spi)?;
+            .map_err(|_| FrameBackendError::Timeout)?;
         if data_mode {
-            self.dc.set_high().map_err(SpiError::Dc)?;
+            self.dc.set_high().map_err(FrameBackendError::Pin)?;
         } else {
-            self.dc.set_low().map_err(SpiError::Dc)?;
+            self.dc.set_low().map_err(FrameBackendError::Pin)?;
         }
 
         let mut word = 0u32;
@@ -302,7 +320,7 @@ where
         Ok(())
     }
 
-    fn queue_bytes_locked(&mut self, bytes: &[u8]) -> Result<(), EspError> {
+    fn queue_bytes_locked(&mut self, bytes: &[u8]) -> Result<(), DmaWaitError> {
         // Ported from LovyanGFX/M5GFX Bus_SPI::writeBytes and
         // Bus_SPI::_setup_dma_desc_links. ESP-IDF owns bus allocation and
         // locking; this Rust implementation owns the acquired transfer window.
@@ -347,18 +365,20 @@ where
         }
     }
 
-    fn wait_for_dma(&self) -> Result<(), EspError> {
+    fn wait_for_dma(&self) -> Result<(), DmaWaitError> {
         let command = register(SPI_CMD_OFFSET);
         let started = unsafe { esp_timer_get_time() };
         while unsafe { command.read_volatile() } & SPI_USR != 0 {
             if unsafe { esp_timer_get_time() }.saturating_sub(started) >= DMA_TIMEOUT_US {
-                return Err(EspError::from_infallible::<{ esp_idf_sys::ESP_ERR_TIMEOUT }>());
+                return Err(DmaWaitError);
             }
             core::hint::spin_loop();
         }
         Ok(())
     }
 }
+
+struct DmaWaitError;
 
 fn register(offset: usize) -> *mut u32 {
     (SPI2_BASE + offset) as *mut u32

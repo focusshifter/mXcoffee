@@ -124,7 +124,9 @@ state, rendering, UI, BLE, power, touch, and sensors remain Rust-owned.
 
 `send_frame_queued` rejects any slice other than exactly 76,800 RGB565 pixels
 before acquiring the bus. The host contract tests cover the exact length and
-both adjacent invalid lengths. Application timing, reboot, and framebuffer
+both adjacent invalid lengths. DMA wait expiry is returned as the distinct
+`FrameTransferError::Timeout` variant rather than a generic transport error.
+Application timing, reboot, and framebuffer
 access use safe wrappers or checked Rust operations, so the display module is
 the only `src/` module containing `unsafe`.
 

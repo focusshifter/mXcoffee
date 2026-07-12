@@ -36,6 +36,7 @@ pub struct InvalidFrameLength {
 #[derive(Debug)]
 pub enum FrameTransferError<T> {
     InvalidFrameLength(InvalidFrameLength),
+    Timeout,
     Transport(T),
 }
 
