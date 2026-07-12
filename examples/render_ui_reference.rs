@@ -14,6 +14,7 @@ fn main() {
         .unwrap_or_else(|| "benchmarks/screenshots/rust-reference.bmp".into());
     let render_splash = std::env::args().nth(2).as_deref() == Some("--splash");
     let render_debug = std::env::args().nth(2).as_deref() == Some("--debug");
+    let render_antialias = std::env::args().nth(2).as_deref() == Some("--aa");
     let mut pressure = [0; HISTORY_LEN];
     let mut weight = [0; HISTORY_LEN];
     let mut times = [0; HISTORY_LEN];
@@ -46,6 +47,7 @@ fn main() {
                 auto_off_timeout_ms: 600_000,
                 timer_running: true,
                 frame_indicator: None,
+                antialias_graph: render_debug || render_antialias,
             },
         )
         .unwrap();

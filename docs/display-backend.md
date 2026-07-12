@@ -192,18 +192,20 @@ Raw telemetry is in
 validated by `scripts/check-soak-benchmark.sh`. Physical pressure-sensor data
 and actual scale weight samples remain separate hardware parity gates.
 
-The production inactivity timeout remains ten minutes and now follows the C++
-firmware's AXP2101 shutdown behavior instead of merely blanking the backlight.
-The `poweroff-test` feature shortens only that timeout to 15 seconds. On the
-physical Core2 it removed power and disconnected USB at the expected timeout;
+AXP2101 inactivity shutdown is opt-in through the `auto-power-off` feature so
+default development and production images retain USB remote-reset access. When
+enabled, its timeout is ten minutes and follows the C++ firmware's shutdown
+behavior instead of merely blanking the backlight. The `poweroff-test` feature
+implies `auto-power-off` and shortens the timeout to 15 seconds. On the physical
+Core2 it removed power and disconnected USB at the expected timeout;
 power-button wake was verified in the following production-flash cycle.
 
 The same device subsequently returned on USB after its physical power button
 was pressed, proving the wake path. The current 30-second graph cadence ran for
 more than two minutes in demo mode without a reset or display error before a
 freshly erased application partition was restored with the normal production
-firmware. That production image booted cleanly with the ten-minute timeout and
-no demo or benchmark features. Physical pressure validation is intentionally
+firmware. That production image booted cleanly with no demo or benchmark
+features. Physical pressure validation is intentionally
 deferred until the sensor is available; final on-device visual/touch approval
 and a real scale weight notification are still operator-observed gates.
 
@@ -251,6 +253,15 @@ is `benchmarks/screenshots/2026-07-12-rust-splash.png`.
 pixel equality with the C++ screenshot oracle. The 2026-07-12 parity result is
 RMSE `0 (0)` across the complete 320x240 frame. The static oracle omits the
 Rust runtime's 4x4 blinking frame heartbeat; runtime screenshots retain it.
+
+Normal firmware antialiases the two graph traces with fixed-point two-pixel
+coverage blended into the RGB565 background. The C++ reference renderer keeps
+M5GFX's aliased line algorithm, allowing the original dashboard to remain an
+exact `RMSE 0 (0)` regression oracle. On the Core2, antialiasing changed the
+post-capture populated-frame mean from 25.79 ms (38.78 FPS) to 27.67 ms (36.14
+FPS); the isolated full-frame upload remained 31.58 FPS. The corresponding
+physical framebuffer is
+`benchmarks/screenshots/2026-07-12-live-demo-aa.png`.
 
 ## Diagnostic Builds
 

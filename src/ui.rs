@@ -62,6 +62,7 @@ pub struct UiData<'a> {
     pub auto_off_timeout_ms: u64,
     pub timer_running: bool,
     pub frame_indicator: Option<bool>,
+    pub antialias_graph: bool,
 }
 
 pub fn draw_splash<T>(target: &mut T) -> Result<(), T::Error>
@@ -175,6 +176,7 @@ where
         data.history_times_ms,
         max_pressure(&data),
         pressure_color(data.last_pressure),
+        data.antialias_graph,
     )?;
     draw_graph(
         target,
@@ -182,6 +184,7 @@ where
         data.history_times_ms,
         500,
         GRAPH_WARNING,
+        data.antialias_graph,
     )?;
     draw_pressure_bar(target, data.last_pressure, max_pressure(&data))?;
     draw_panel_values(target, &data)?;
@@ -347,6 +350,7 @@ fn draw_graph<T>(
     times: &[u32],
     max_value: i32,
     color: Rgb565,
+    antialias: bool,
 ) -> Result<(), T::Error>
 where
     T: DrawTarget<Color = Rgb565>,
@@ -377,10 +381,83 @@ where
     let mut previous = point(0);
     for index in 1..count {
         let current = point(index);
-        draw_m5_line(target, previous, current, color)?;
+        if antialias {
+            draw_antialiased_line(target, previous, current, color)?;
+        } else {
+            draw_m5_line(target, previous, current, color)?;
+        }
         previous = current;
     }
     Ok(())
+}
+
+fn draw_antialiased_line<T>(
+    target: &mut T,
+    mut start: Point,
+    mut end: Point,
+    color: Rgb565,
+) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    let steep = (end.y - start.y).abs() > (end.x - start.x).abs();
+    if steep {
+        core::mem::swap(&mut start.x, &mut start.y);
+        core::mem::swap(&mut end.x, &mut end.y);
+    }
+    if start.x > end.x {
+        core::mem::swap(&mut start, &mut end);
+    }
+    let delta_x = end.x - start.x;
+    if delta_x == 0 {
+        let point = if steep {
+            Point::new(start.y, start.x)
+        } else {
+            start
+        };
+        return target.draw_iter([Pixel(point, color)]);
+    }
+
+    let gradient = ((end.y - start.y) << 16) / delta_x;
+    let mut y_fixed = start.y << 16;
+    for x in start.x..=end.x {
+        let base_y = y_fixed.div_euclid(1 << 16);
+        let fraction = y_fixed.rem_euclid(1 << 16) as u32;
+        let adjacent_alpha = ((fraction * 255) >> 16) as u8;
+        let base_alpha = 255 - adjacent_alpha;
+        let point = |y| {
+            if steep {
+                Point::new(y, x)
+            } else {
+                Point::new(x, y)
+            }
+        };
+        target.draw_iter(
+            [
+                Some(Pixel(point(base_y), blend_graph_pixel(color, base_alpha))),
+                (adjacent_alpha > 0)
+                    .then(|| Pixel(point(base_y + 1), blend_graph_pixel(color, adjacent_alpha))),
+            ]
+            .into_iter()
+            .flatten(),
+        )?;
+        y_fixed += gradient;
+    }
+    Ok(())
+}
+
+fn blend_graph_pixel(foreground: Rgb565, alpha: u8) -> Rgb565 {
+    let foreground = Rgb888::from(foreground);
+    let background = Rgb888::from(DARK_BG);
+    let alpha = u32::from(alpha);
+    let blend = |foreground: u8, background: u8| {
+        ((u32::from(foreground) * alpha + u32::from(background) * (255 - alpha)) / 255) as u8
+    };
+    Rgb565::from(Rgb888::new(
+        blend(foreground.r(), background.r()),
+        blend(foreground.g(), background.g()),
+        blend(foreground.b(), background.b()),
+    ))
 }
 
 fn draw_m5_line<T>(
@@ -577,6 +654,7 @@ mod tests {
             auto_off_timeout_ms: 600_000,
             timer_running: true,
             frame_indicator: Some(frame_indicator),
+            antialias_graph: false,
         }
     }
 
@@ -624,6 +702,7 @@ mod tests {
                 auto_off_timeout_ms: 600_000,
                 timer_running: true,
                 frame_indicator: Some(true),
+                antialias_graph: false,
             },
         )
         .unwrap();
@@ -653,6 +732,25 @@ mod tests {
         assert!(drawn
             .iter()
             .all(|(x, y)| (90..230).contains(x) && (100..140).contains(y)));
+    }
+
+    #[test]
+    fn antialiased_graph_adds_coverage_pixels() {
+        let mut pixels = [DARK_BG; WIDTH as usize * HEIGHT as usize];
+        let mut target = FastFrameBuffer::new(&mut pixels, WIDTH as usize, HEIGHT as usize);
+        draw_graph(
+            &mut target,
+            &[0, 8_400],
+            &[0, GRAPH_WINDOW_MS],
+            10_000,
+            GRAPH_GOOD,
+            true,
+        )
+        .unwrap();
+
+        assert!(pixels
+            .iter()
+            .any(|pixel| *pixel != DARK_BG && *pixel != GRAPH_GOOD));
     }
 
     #[test]

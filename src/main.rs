@@ -755,7 +755,8 @@ fn main() {
             esp_idf_hal::reset::restart();
         }
 
-        if !cfg!(feature = "benchmark-soak")
+        if cfg!(feature = "auto-power-off")
+            && !cfg!(feature = "benchmark-soak")
             && now.saturating_sub(state.last_activity_ms) >= AUTO_OFF_TIMEOUT_MS
         {
             set_core2_backlight(&mut internal_i2c, false).ok();
@@ -854,6 +855,7 @@ fn main() {
             auto_off_timeout_ms: AUTO_OFF_TIMEOUT_MS,
             timer_running: state.session.timer_running,
             frame_indicator: Some(state.frame_indicator),
+            antialias_graph: true,
         };
 
         #[cfg(feature = "benchmark")]
@@ -1124,6 +1126,7 @@ fn run_display_benchmarks<SPI, DC, CS>(
             auto_off_timeout_ms: AUTO_OFF_TIMEOUT_MS,
             timer_running: true,
             frame_indicator: Some(iteration % 2 == 0),
+            antialias_graph: true,
         };
 
         let frame_started = display_interface::monotonic_time_us();
