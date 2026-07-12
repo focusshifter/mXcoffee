@@ -113,6 +113,17 @@ The initial host results are stored in
 tracking renderer regressions, but physical Core2 results remain the acceptance
 gate.
 
+The physical Core2 gate used a controlled 60-second A/B soak. Pre-skin commit
+`1e82c96` completed 1,366 frames (22.76 FPS); skin-ready commit `74bef0a`
+completed 1,378 frames (22.96 FPS). Both maintained 50.0 Hz pressure sampling
+with zero display errors or PSRAM loss. The raw comparison is stored in
+`benchmarks/results/2026-07-12-skin-ready-ui-device-ab.jsonl`.
+
+Both A/B runs were slower than the older 28.44 FPS long-soak record under the
+current runtime environment. Because the old and new commits reproduce the
+same lower cadence on the same device while isolated render/upload results are
+unchanged, that difference is not attributed to the skin architecture.
+
 ## Adding a Skin
 
 1. Add a semantic `Theme` in `theme.rs`.

@@ -209,6 +209,16 @@ features. Physical pressure validation is intentionally
 deferred until the sensor is available; final on-device visual/touch approval
 and a real scale weight notification are still operator-observed gates.
 
+### Skin-ready UI A/B
+
+The skin architecture was checked on the same Core2 with sequential 60-second
+`demo,benchmark-soak` builds. Pre-skin commit `1e82c96` completed 1,366 frames
+(22.76 FPS); skin-ready commit `74bef0a` completed 1,378 frames (22.96 FPS).
+Both sampled pressure at 50.0 Hz and reported zero display errors, internal
+heap loss after warmup, or PSRAM loss. This controlled result passes the
+no-regression gate. Raw data is in
+`benchmarks/results/2026-07-12-skin-ready-ui-device-ab.jsonl`.
+
 ## Live Screenshot Capture
 
 Hold button A for at least one second to stream the framebuffer currently being
