@@ -13,6 +13,7 @@ fn main() {
         .nth(1)
         .unwrap_or_else(|| "benchmarks/screenshots/rust-reference.bmp".into());
     let render_splash = std::env::args().nth(2).as_deref() == Some("--splash");
+    let render_debug = std::env::args().nth(2).as_deref() == Some("--debug");
     let mut pressure = [0; HISTORY_LEN];
     let mut weight = [0; HISTORY_LEN];
     let mut times = [0; HISTORY_LEN];
@@ -38,7 +39,7 @@ fn main() {
                 scale_name: "LFSMART SCALE",
                 shot_time_tenths: 123,
                 pressure_hex: "reference",
-                debug_mode: false,
+                debug_mode: render_debug,
                 last_refresh_ms: 0,
                 last_activity_ms: 0,
                 now_ms: 0,

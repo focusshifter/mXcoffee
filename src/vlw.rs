@@ -94,9 +94,10 @@ impl<'a> VlwFont<'a> {
                 cursor_x += self.height() * 2 / 7;
                 continue;
             }
-            let glyph = self
-                .glyph(character)
-                .expect("dashboard strings only contain glyphs embedded in MoonGloss");
+            let Ok(glyph) = self.glyph(character) else {
+                cursor_x += self.height() * 2 / 7;
+                continue;
+            };
             let top = position.y + self.max_ascent - glyph.baseline_delta;
             let left = cursor_x + glyph.x_offset;
             let pixels = glyph
@@ -131,9 +132,12 @@ impl<'a> VlwFont<'a> {
     where
         T: DrawTarget<Color = Rgb565>,
     {
-        let width = self
-            .measure(text)
-            .expect("dashboard strings only contain glyphs embedded in MoonGloss");
+        let width = text.chars().fold(0, |width, character| {
+            width
+                + self
+                    .glyph(character)
+                    .map_or(self.height() * 2 / 7, |glyph| glyph.advance)
+        });
         self.draw(
             target,
             text,

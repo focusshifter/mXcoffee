@@ -1,6 +1,6 @@
 use core::fmt::Write as _;
 
-use embedded_graphics::mono_font::ascii::{FONT_10X20, FONT_6X10};
+use embedded_graphics::mono_font::ascii::FONT_10X20;
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::pixelcolor::{Rgb565, Rgb888};
 use embedded_graphics::prelude::*;
@@ -29,7 +29,6 @@ const MOON_GLOSS_48: &[u8] = include_bytes!("../assets/fonts/MoonGloss_48_Numeri
 const DARK_BG: Rgb565 = rgb(0x03, 0x16, 0x1e);
 const ACCENT_BG: Rgb565 = rgb(0x96, 0xcb, 0xbb);
 const ACCENT_TEXT: Rgb565 = rgb(0x0a, 0x3b, 0x44);
-const PANEL_TEXT: Rgb565 = rgb(0xdd, 0xfe, 0xee);
 const GRAPH_GOOD: Rgb565 = rgb(0xbd, 0xff, 0xff);
 const GRAPH_WARNING: Rgb565 = rgb(0xd6, 0xa6, 0x7b);
 const BAR_BG: Rgb565 = rgb(0x0a, 0x3b, 0x44);
@@ -471,38 +470,34 @@ fn draw_debug_overlay<T>(target: &mut T, data: &UiData<'_>) -> Result<(), T::Err
 where
     T: DrawTarget<Color = Rgb565>,
 {
-    Rectangle::new(Point::new(8, 88), Size::new(260, 70))
-        .into_styled(PrimitiveStyle::with_fill(DARK_BG))
-        .draw(target)?;
-    let style = MonoTextStyle::new(&FONT_6X10, PANEL_TEXT);
+    let font = VlwFont::new(MOON_GLOSS_16).unwrap();
     let mut line: String<64> = String::new();
     write!(
         &mut line,
-        "Pressure: {} raw: {}",
-        data.last_pressure, data.pressure_hex
-    )
-    .ok();
-    Text::new(&line, Point::new(10, 100), style).draw(target)?;
-    line.clear();
-    write!(
-        &mut line,
-        "Timer: {} refresh: {}ms",
-        if data.timer_running {
-            "running"
+        "Scale: {}",
+        if data.scale_connected {
+            data.scale_name
         } else {
-            "paused"
-        },
-        data.last_refresh_ms
+            "none"
+        }
     )
     .ok();
-    Text::new(&line, Point::new(10, 114), style).draw(target)?;
+    font.draw(
+        target,
+        &line,
+        Point::new(10, 100),
+        SPLASH_TEXT_SOURCE,
+        Rgb888::new(0x03, 0x16, 0x1e),
+    )?;
     line.clear();
-    let remaining = data
-        .last_activity_ms
-        .saturating_add(data.auto_off_timeout_ms)
-        .saturating_sub(data.now_ms);
-    write!(&mut line, "Auto-off: {}s", remaining / 1_000).ok();
-    Text::new(&line, Point::new(10, 128), style).draw(target)?;
+    write!(&mut line, "Nearby: {}", data.scale_name).ok();
+    font.draw(
+        target,
+        &line,
+        Point::new(10, 120),
+        SPLASH_TEXT_SOURCE,
+        Rgb888::new(0x03, 0x16, 0x1e),
+    )?;
     Ok(())
 }
 
