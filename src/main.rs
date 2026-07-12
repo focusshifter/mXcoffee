@@ -185,6 +185,7 @@ fn read_battery_percentage(i2c: &mut I2cDriver<'_>) -> Result<u8, EspError> {
 }
 
 fn configure_core2_power(i2c: &mut I2cDriver<'_>) -> Result<(), EspError> {
+    const DISPLAY_BRIGHTNESS: u8 = 127;
     const REG_DCDC_CTRL: u8 = 0x80;
     const REG_DCDC1_VOLTAGE: u8 = 0x82;
     const REG_DCDC3_VOLTAGE: u8 = 0x84;
@@ -257,13 +258,25 @@ fn configure_core2_power(i2c: &mut I2cDriver<'_>) -> Result<(), EspError> {
         }
     }
 
+    fn core2_backlight_reg(brightness: u8) -> u8 {
+        if brightness == 0 {
+            0
+        } else {
+            ((u16::from(brightness) + 641) >> 5) as u8
+        }
+    }
+
     write_reg(i2c, REG_DCDC1_VOLTAGE, dcdc1_voltage_to_reg(3_300))?;
     write_reg(i2c, REG_DCDC3_VOLTAGE, dcdc3_voltage_to_reg(3_300))?;
     modify_reg(i2c, REG_DCDC_CTRL, DCDC1_MASK | DCDC3_MASK)?;
 
     write_reg(i2c, REG_ALDO2_VOLTAGE, ldo_voltage_to_reg(3_300))?;
     write_reg(i2c, REG_ALDO4_VOLTAGE, ldo_voltage_to_reg(3_300))?;
-    write_reg(i2c, REG_BLDO1_VOLTAGE, ldo_voltage_to_reg(3_300))?;
+    write_reg(
+        i2c,
+        REG_BLDO1_VOLTAGE,
+        core2_backlight_reg(DISPLAY_BRIGHTNESS),
+    )?;
     clear_reg(i2c, REG_LDO_CTRL, ALDO2_MASK)?;
     FreeRtos::delay_ms(2);
     modify_reg(i2c, REG_LDO_CTRL, ALDO2_MASK | ALDO4_MASK | BLDO1_MASK)?;

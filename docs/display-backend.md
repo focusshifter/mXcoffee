@@ -249,6 +249,11 @@ The one-second `mXcoffee` boot splash follows the C++ geometry and drawing
 sequence before the display worker starts. Its host-rendered regression artifact
 is `benchmarks/screenshots/2026-07-12-rust-splash.png`.
 
+Core2 v1.1 backlight power uses M5GFX's default brightness value of 127. The
+AXP2101 mapping writes BLDO1 register 24 (2.9 V); driving BLDO1 at its 3.3 V
+maximum materially raises the IPS black level and washes the dark teal palette
+out toward cyan even though the framebuffer colors remain unchanged.
+
 `scripts/render-ui-reference.sh` renders the Rust dashboard and requires exact
 pixel equality with the C++ screenshot oracle. The 2026-07-12 parity result is
 RMSE `0 (0)` across the complete 320x240 frame. The static oracle omits the
