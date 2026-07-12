@@ -290,7 +290,11 @@ cargo +stable run --example ui_simulator --target x86_64-unknown-linux-gnu
 The minifb dependency is host-only and does not enter firmware builds. The
 window renders the same `FastFrameBuffer`, `draw_splash`, and
 `draw_main_screen_retained` code used on the Core2 at 50 FPS and 2x initial
-scale. Controls are `D` for the debug overlay, `B` for Bluetooth status, `A` to
+scale. The window defaults to an approximate Core2 panel preview that lifts the
+cyan shadow response visible on the physical LCD. Press `P` to switch to raw
+RGB565 colors; raw mode remains authoritative for pixel and oracle comparisons
+because the optical preview is not a calibrated display profile. Controls are
+`D` for the debug overlay, `B` for Bluetooth status, `A` to
 compare aliased and antialiased graphs, `Space` to pause, `R` to restart the
 simulated shot, and `Esc` to quit. The shot automatically repeats every 40
 seconds.

@@ -16,7 +16,7 @@ const SHOT_CYCLE_MS: u64 = 40_000;
 
 fn main() {
     let mut window = Window::new(
-        "mXcoffee Rust UI Simulator",
+        "mXcoffee Rust UI Simulator - approximate Core2 preview",
         WIDTH as usize,
         HEIGHT as usize,
         WindowOptions {
@@ -28,7 +28,9 @@ fn main() {
     .expect("failed to create simulator window");
     window.set_target_fps(50);
 
-    println!("D debug | B Bluetooth | A antialias | Space pause | R restart | Esc quit");
+    println!(
+        "D debug | B Bluetooth | A antialias | P panel preview | Space pause | R restart | Esc quit"
+    );
 
     let mut pixels = vec![Rgb565::BLACK; WIDTH as usize * HEIGHT as usize];
     let mut window_pixels = vec![0u32; pixels.len()];
@@ -45,6 +47,7 @@ fn main() {
     let mut debug = false;
     let mut bluetooth = true;
     let mut antialias = true;
+    let mut panel_preview = true;
     let mut frame_indicator = false;
     let mut static_screen_initialized = false;
 
@@ -57,6 +60,14 @@ fn main() {
         }
         if window.is_key_pressed(Key::A, KeyRepeat::No) {
             antialias = !antialias;
+        }
+        if window.is_key_pressed(Key::P, KeyRepeat::No) {
+            panel_preview = !panel_preview;
+            window.set_title(if panel_preview {
+                "mXcoffee Rust UI Simulator - approximate Core2 preview"
+            } else {
+                "mXcoffee Rust UI Simulator - raw RGB565"
+            });
         }
         if window.is_key_pressed(Key::Space, KeyRepeat::No) {
             if let Some(instant) = paused_at.take() {
@@ -157,7 +168,7 @@ fn main() {
             frame_indicator = !frame_indicator;
         }
 
-        convert_frame(&pixels, &mut window_pixels);
+        convert_frame(&pixels, &mut window_pixels, panel_preview);
         window
             .update_with_buffer(&window_pixels, WIDTH as usize, HEIGHT as usize)
             .expect("failed to update simulator window");
@@ -180,14 +191,36 @@ fn reset_cycle(
     *last_history_ms = 0;
 }
 
-fn convert_frame(source: &[Rgb565], output: &mut [u32]) {
+fn convert_frame(source: &[Rgb565], output: &mut [u32], panel_preview: bool) {
     for (source, output) in source.iter().zip(output) {
         let raw = source.into_storage();
-        let red = ((raw >> 11) & 0x1f) as u32;
-        let green = ((raw >> 5) & 0x3f) as u32;
-        let blue = (raw & 0x1f) as u32;
-        *output = (((red << 3) | (red >> 2)) << 16)
-            | (((green << 2) | (green >> 4)) << 8)
-            | ((blue << 3) | (blue >> 2));
+        let red = expand_5_bit((raw >> 11) & 0x1f);
+        let green = expand_6_bit((raw >> 5) & 0x3f);
+        let blue = expand_5_bit(raw & 0x1f);
+        let (red, green, blue) = if panel_preview {
+            (
+                panel_channel(red, 0.0, 0.95),
+                panel_channel(green, 14.0, 0.82),
+                panel_channel(blue, 22.0, 0.70),
+            )
+        } else {
+            (red, green, blue)
+        };
+        *output = (u32::from(red) << 16) | (u32::from(green) << 8) | u32::from(blue);
     }
+}
+
+fn expand_5_bit(value: u16) -> u8 {
+    ((value << 3) | (value >> 2)) as u8
+}
+
+fn expand_6_bit(value: u16) -> u8 {
+    ((value << 2) | (value >> 4)) as u8
+}
+
+fn panel_channel(value: u8, black_floor: f32, gamma: f32) -> u8 {
+    let normalized = f32::from(value) / 255.0;
+    (black_floor + (255.0 - black_floor) * normalized.powf(gamma))
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
