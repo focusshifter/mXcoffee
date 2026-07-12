@@ -41,10 +41,6 @@ impl PressureSensor {
         Ok(mbar.clamp(0, 20_000) as i16)
     }
 
-    pub fn max_pressure_mbar(&self) -> i16 {
-        20_000
-    }
-
     pub fn last_hex_payload(&self) -> &str {
         &self.last_hex
     }

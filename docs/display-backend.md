@@ -42,9 +42,22 @@ values. A buffer is returned to the renderer only after its DMA upload has
 completed, so the renderer cannot mutate memory that the display worker is
 reading. Frames remain ordered, with at most two queued for the worker.
 
+Each buffer retains its static dashboard background after upload. The renderer
+erases and redraws the graph, status, value, bar, and debug regions before the
+next full-frame submission; panel frames and labels are initialized once per
+buffer. This reduces PSRAM contention without changing the display contract:
+every update still transfers all 153,600 bytes to the panel. A host regression
+compares successive retained redraws pixel-for-pixel with clean full redraws.
+
 The display worker pauses for one scheduler tick after every four completed
 frames. This gives the ESP32 idle task regular CPU time without adding a
 scheduler delay after every upload.
+
+Pressure acquisition runs in a separate 20 ms Rust task and feeds a bounded
+sample queue. Rendering can therefore slow or block without reducing sensor
+cadence. The BLE scale worker discovers an advertising scale before connecting;
+it does not issue long direct-connect attempts to an unavailable persisted
+address.
 
 ## Transaction Sequence
 
@@ -138,6 +151,24 @@ stable; only the intentional corner frame indicator blinks.
 Raw measurements live in
 `benchmarks/results/2026-07-11-raw-8k-psram80-40mhz.jsonl` and are checked by
 `scripts/check-display-benchmark.sh`.
+
+### Retained dashboard and independent sampling
+
+The 2026-07-12 whole-application optimization round produced:
+
+| Measurement | Median | Rate |
+| --- | ---: | ---: |
+| Retained dynamic render | 20.283 ms | 49.30 FPS |
+| Pipelined render/submit | 25.401 ms | 39.36 FPS |
+| Concurrent display-worker upload | 31.596 ms | 31.64 FPS |
+| Completed LCD frame cadence | 32.013 ms | 31.23 FPS |
+
+A 120-second demo soak completed 3,395 frames (28.29 FPS wall-clock) while
+sampling pressure at 50.00 Hz. Its maximum pressure gap was 23 ms; display
+errors, watchdogs, and post-warmup heap loss were zero. The frame p50/p95/p99
+were 23/33/52 ms. This is a passing short-soak result, not a substitute for the
+required 30-minute connected-hardware soak. Raw JSON is stored in
+`benchmarks/results/2026-07-12-retained-ui-short-soak-40mhz.jsonl`.
 
 ## Diagnostic Builds
 

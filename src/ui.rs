@@ -59,6 +59,27 @@ where
     T: DrawTarget<Color = Rgb565>,
 {
     target.clear(DARK_BG)?;
+    draw_panel_frames(target)?;
+    draw_main_screen_retained(target, data)
+}
+
+pub fn initialize_main_screen<T>(target: &mut T) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    target.clear(DARK_BG)?;
+    draw_panel_frames(target)
+}
+
+pub fn draw_main_screen_retained<T>(target: &mut T, data: UiData<'_>) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    // Each framebuffer preserves its static background between full-screen uploads.
+    // This region covers both graphs and any previous debug overlay.
+    Rectangle::new(Point::new(8, 88), Size::new(268, 123))
+        .into_styled(PrimitiveStyle::with_fill(DARK_BG))
+        .draw(target)?;
     draw_status_band(target, &data)?;
     draw_graph(
         target,
@@ -75,7 +96,7 @@ where
         GRAPH_WARNING,
     )?;
     draw_pressure_bar(target, data.last_pressure, max_pressure(&data))?;
-    draw_panels(target, &data)?;
+    draw_panel_values(target, &data)?;
 
     if data.debug_mode {
         draw_debug_overlay(target, &data)?;
@@ -104,7 +125,7 @@ fn pressure_color(pressure: i16) -> Rgb565 {
     }
 }
 
-fn draw_panels<T>(target: &mut T, data: &UiData<'_>) -> Result<(), T::Error>
+fn draw_panel_frames<T>(target: &mut T) -> Result<(), T::Error>
 where
     T: DrawTarget<Color = Rgb565>,
 {
@@ -121,6 +142,18 @@ where
             MonoTextStyle::new(&FONT_6X10, ACCENT_TEXT),
         )
         .draw(target)?;
+    }
+    Ok(())
+}
+
+fn draw_panel_values<T>(target: &mut T, data: &UiData<'_>) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    for x in [0, 110, 220] {
+        Rectangle::new(Point::new(x + 2, 18), Size::new(96, 60))
+            .into_styled(PrimitiveStyle::with_fill(ACCENT_TEXT))
+            .draw(target)?;
     }
 
     let large = MonoTextStyle::new(&FONT_9X18_BOLD, PANEL_TEXT);
@@ -370,6 +403,35 @@ mod tests {
     use super::*;
     use crate::fast_framebuffer::FastFrameBuffer;
 
+    fn reference_data<'a>(
+        pressure: &'a [i16],
+        weight: &'a [i16],
+        times: &'a [u32],
+        frame_indicator: bool,
+    ) -> UiData<'a> {
+        UiData {
+            pressure_history: pressure,
+            weight_history_tenths: weight,
+            history_times_ms: times,
+            last_pressure: 8_400,
+            max_sensor_pressure: 20_000,
+            shot_weight: 21.8,
+            flow_rate: 1.0,
+            bluetooth_on: true,
+            scale_connected: true,
+            scale_name: "LFSMART SCALE",
+            shot_time_tenths: 123,
+            pressure_hex: "reference",
+            debug_mode: false,
+            last_refresh_ms: 0,
+            last_activity_ms: 0,
+            now_ms: 0,
+            auto_off_timeout_ms: 600_000,
+            timer_running: true,
+            frame_indicator,
+        }
+    }
+
     #[test]
     fn reference_histories_match_cpp_oracle_endpoints() {
         let mut pressure = [0; HISTORY_LEN];
@@ -425,5 +487,47 @@ mod tests {
             pixels[(GRAPH_Y as usize + GRAPH_HEIGHT as usize) * WIDTH as usize + GRAPH_X as usize],
             DARK_BG
         );
+    }
+
+    #[test]
+    fn retained_redraw_matches_clean_full_redraw() {
+        let mut pressure = [0; HISTORY_LEN];
+        let mut weight = [0; HISTORY_LEN];
+        let mut times = [0; HISTORY_LEN];
+        build_reference_histories(&mut pressure, &mut weight, &mut times);
+        let mut expected = vec![Rgb565::BLACK; WIDTH as usize * HEIGHT as usize];
+        let mut retained = expected.clone();
+
+        initialize_main_screen(&mut FastFrameBuffer::new(
+            &mut retained,
+            WIDTH as usize,
+            HEIGHT as usize,
+        ))
+        .unwrap();
+        draw_main_screen_retained(
+            &mut FastFrameBuffer::new(&mut retained, WIDTH as usize, HEIGHT as usize),
+            reference_data(&pressure, &weight, &times, true),
+        )
+        .unwrap();
+        draw_main_screen(
+            &mut FastFrameBuffer::new(&mut expected, WIDTH as usize, HEIGHT as usize),
+            reference_data(&pressure, &weight, &times, true),
+        )
+        .unwrap();
+        assert_eq!(retained, expected);
+
+        pressure.rotate_left(1);
+        pressure[HISTORY_LEN - 1] = 2_500;
+        draw_main_screen_retained(
+            &mut FastFrameBuffer::new(&mut retained, WIDTH as usize, HEIGHT as usize),
+            reference_data(&pressure, &weight, &times, false),
+        )
+        .unwrap();
+        draw_main_screen(
+            &mut FastFrameBuffer::new(&mut expected, WIDTH as usize, HEIGHT as usize),
+            reference_data(&pressure, &weight, &times, false),
+        )
+        .unwrap();
+        assert_eq!(retained, expected);
     }
 }

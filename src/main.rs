@@ -30,7 +30,9 @@ use mipidsi::options::{ColorInversion, ColorOrder};
 use mipidsi::{models::ILI9342CRgb565, Builder};
 use mxcoffee::fast_framebuffer::{clear_black, FastFrameBuffer};
 use mxcoffee::session::SessionState;
-use mxcoffee::ui::{draw_center_message, draw_main_screen, UiData};
+use mxcoffee::ui::{
+    draw_center_message, draw_main_screen_retained, initialize_main_screen, UiData,
+};
 #[cfg(feature = "benchmark-soak")]
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError, TrySendError};
@@ -47,6 +49,12 @@ const REFRESH_INTERVAL_MS: u64 = 20;
 const DISPLAY_SPI_HZ: u32 = 40_000_000;
 const DISPLAY_TRANSFER_BUFFER_SIZE: usize = 8 * 1024;
 type OwnedFrameBuffer = Box<[Rgb565; PIXEL_COUNT]>;
+
+struct PressureSample {
+    pressure_mbar: i16,
+    sampled_at_ms: u64,
+    debug_payload: String,
+}
 
 fn exchange_frame(
     frame_tx: &SyncSender<OwnedFrameBuffer>,
@@ -90,10 +98,6 @@ struct DeviceState {
     frame_accum_ms: u64,
     frame_counter: u32,
     last_battery_read_ms: u64,
-    #[cfg(not(feature = "demo"))]
-    last_pressure_error_log_ms: u64,
-    #[cfg(not(feature = "demo"))]
-    pressure_available: bool,
 }
 
 impl DeviceState {
@@ -113,10 +117,6 @@ impl DeviceState {
             frame_accum_ms: 0,
             frame_counter: 0,
             last_battery_read_ms: 0,
-            #[cfg(not(feature = "demo"))]
-            last_pressure_error_log_ms: 0,
-            #[cfg(not(feature = "demo"))]
-            pressure_available: true,
         }
     }
 
@@ -309,7 +309,7 @@ fn main() {
     );
 
     #[cfg(not(feature = "demo"))]
-    let mut pressure_i2c = I2cDriver::new(
+    let pressure_i2c = I2cDriver::new(
         peripherals.i2c0,
         gpios.gpio33,
         gpios.gpio32,
@@ -357,8 +357,6 @@ fn main() {
         .unwrap();
     let (mut display_interface, _, _) = display.release();
 
-    #[cfg(not(feature = "demo"))]
-    let mut pressure_sensor = PressureSensor::new();
     let mut touch_buttons = TouchButtons::new();
     let mut pressure_history = [0i16; PRESSURE_HISTORY_LEN];
     let mut weight_history = [0i16; PRESSURE_HISTORY_LEN];
@@ -372,10 +370,82 @@ fn main() {
     #[cfg(feature = "demo")]
     let mut demo_scale = mxcoffee::demo::SimulatedScale::default();
     let mut framebuffer = Box::new([Rgb565::BLACK; PIXEL_COUNT]);
+    initialize_main_screen(&mut FastFrameBuffer::new(
+        framebuffer.as_mut(),
+        DISPLAY_WIDTH,
+        DISPLAY_HEIGHT,
+    ))
+    .unwrap();
 
     #[cfg(all(feature = "benchmark", not(feature = "benchmark-soak")))]
-    run_display_benchmarks(&mut display_interface, framebuffer.as_mut());
+    {
+        run_display_benchmarks(&mut display_interface, framebuffer.as_mut());
+        initialize_main_screen(&mut FastFrameBuffer::new(
+            framebuffer.as_mut(),
+            DISPLAY_WIDTH,
+            DISPLAY_HEIGHT,
+        ))
+        .unwrap();
+    }
     ble_server.start_scale_worker();
+
+    let (pressure_tx, pressure_rx) = sync_channel::<PressureSample>(16);
+    #[cfg(feature = "demo")]
+    std::thread::Builder::new()
+        .name("pressure".into())
+        .stack_size(4 * 1024)
+        .spawn(move || loop {
+            let sampled_at_ms = now_ms();
+            let sample = PressureSample {
+                pressure_mbar: mxcoffee::demo::simulated_pressure_mbar(
+                    sampled_at_ms.saturating_sub(demo_started_ms),
+                ),
+                sampled_at_ms,
+                debug_payload: "SIM SIM SIM".into(),
+            };
+            if matches!(
+                pressure_tx.try_send(sample),
+                Err(TrySendError::Disconnected(_))
+            ) {
+                break;
+            }
+            FreeRtos::delay_ms(20);
+        })
+        .expect("failed to start pressure sampler");
+    #[cfg(not(feature = "demo"))]
+    std::thread::Builder::new()
+        .name("pressure".into())
+        .stack_size(4 * 1024)
+        .spawn(move || {
+            let mut pressure_i2c = pressure_i2c;
+            let mut pressure_sensor = PressureSensor::new();
+            let mut last_error_log_ms = 0;
+            loop {
+                let sampled_at_ms = now_ms();
+                match pressure_sensor.read_pressure_mbar(&mut pressure_i2c) {
+                    Ok(pressure_mbar) => {
+                        let sample = PressureSample {
+                            pressure_mbar,
+                            sampled_at_ms,
+                            debug_payload: pressure_sensor.last_hex_payload().into(),
+                        };
+                        if matches!(
+                            pressure_tx.try_send(sample),
+                            Err(TrySendError::Disconnected(_))
+                        ) {
+                            break;
+                        }
+                    }
+                    Err(err) if sampled_at_ms.saturating_sub(last_error_log_ms) >= 1_000 => {
+                        println!("Pressure read failed: {err:?}");
+                        last_error_log_ms = sampled_at_ms;
+                    }
+                    Err(_) => {}
+                }
+                FreeRtos::delay_ms(20);
+            }
+        })
+        .expect("failed to start pressure sampler");
 
     #[cfg(feature = "benchmark-soak")]
     let display_errors = Arc::new(AtomicU32::new(0));
@@ -385,8 +455,15 @@ fn main() {
     let (frame_tx, frame_rx) = sync_channel::<OwnedFrameBuffer>(2);
     let (available_tx, available_rx) = sync_channel::<OwnedFrameBuffer>(3);
     for _ in 0..2 {
+        let mut available = Box::new([Rgb565::BLACK; PIXEL_COUNT]);
+        initialize_main_screen(&mut FastFrameBuffer::new(
+            available.as_mut(),
+            DISPLAY_WIDTH,
+            DISPLAY_HEIGHT,
+        ))
+        .unwrap();
         available_tx
-            .send(Box::new([Rgb565::BLACK; PIXEL_COUNT]))
+            .send(available)
             .expect("failed to seed display framebuffer pool");
     }
     std::thread::Builder::new()
@@ -437,8 +514,16 @@ fn main() {
                                 cadence_stats.report(5);
                             }
                         }
-                        if available_tx.send(frame).is_err() {
-                            break;
+                        let mut returned = frame;
+                        loop {
+                            match available_tx.try_send(returned) {
+                                Ok(()) => break,
+                                Err(TrySendError::Full(frame)) => {
+                                    returned = frame;
+                                    FreeRtos::delay_ms(1);
+                                }
+                                Err(TrySendError::Disconnected(_)) => return,
+                            }
                         }
                         frames_until_pause -= 1;
                         if frames_until_pause == 0 {
@@ -490,12 +575,48 @@ fn main() {
     let mut soak_pressure_notify_successes = 0u64;
     #[cfg(feature = "benchmark-soak")]
     let mut soak_completed = false;
+    let mut pressure = 0i16;
+    let mut pressure_hex = String::new();
 
     loop {
         #[cfg(feature = "benchmark")]
         let pipeline_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         let now = now_ms();
         let frame_start = now;
+
+        while let Ok(sample) = pressure_rx.try_recv() {
+            pressure = sample.pressure_mbar;
+            pressure_hex = sample.debug_payload;
+            #[cfg(feature = "benchmark-soak")]
+            soak_stats.record_pressure_sample(sample.sampled_at_ms);
+
+            if state.last_pressure.map(|p| p != pressure).unwrap_or(true) {
+                state.record_activity(sample.sampled_at_ms);
+            }
+            state.last_pressure = Some(pressure);
+            state
+                .session
+                .update_pressure(pressure, sample.sampled_at_ms);
+            pressure_history.rotate_left(1);
+            pressure_history[PRESSURE_HISTORY_LEN - 1] = pressure;
+
+            state.bt_connected = ble_server.is_connected();
+            if state.bluetooth_on {
+                #[cfg(feature = "benchmark-soak")]
+                if state.bt_connected {
+                    soak_pressure_notify_attempts = soak_pressure_notify_attempts.saturating_add(1);
+                }
+                let notified = ble_server.notify_pressure(pressure);
+                #[cfg(feature = "benchmark-soak")]
+                if state.bt_connected && notified {
+                    soak_pressure_notify_successes =
+                        soak_pressure_notify_successes.saturating_add(1);
+                }
+                state.last_bt_send_successful = notified;
+            } else {
+                state.last_bt_send_successful = false;
+            }
+        }
 
         let buttons = touch_buttons.poll(&mut internal_i2c).unwrap_or_default();
         if buttons.any_pressed() {
@@ -578,43 +699,6 @@ fn main() {
         state.frame_indicator = !state.frame_indicator;
 
         #[cfg(feature = "demo")]
-        let (pressure, pressure_sample_valid) = (
-            mxcoffee::demo::simulated_pressure_mbar(now.saturating_sub(demo_started_ms)),
-            true,
-        );
-
-        #[cfg(not(feature = "demo"))]
-        let (pressure, pressure_sample_valid) = if !state.pressure_available {
-            (state.last_pressure.unwrap_or(0), false)
-        } else {
-            match pressure_sensor.read_pressure_mbar(&mut pressure_i2c) {
-                Ok(value) => (value, true),
-                Err(err) => {
-                    if now.saturating_sub(state.last_pressure_error_log_ms) >= 1_000 {
-                        println!("Pressure read failed: {err:?}");
-                        state.last_pressure_error_log_ms = now;
-                    }
-                    state.pressure_available = false;
-                    (state.last_pressure.unwrap_or(0), false)
-                }
-            }
-        };
-
-        #[cfg(not(feature = "benchmark-soak"))]
-        let _ = pressure_sample_valid;
-
-        #[cfg(feature = "benchmark-soak")]
-        if pressure_sample_valid {
-            soak_stats.record_pressure_sample(now);
-        }
-
-        if state.last_pressure.map(|p| p != pressure).unwrap_or(true) {
-            state.record_activity(now);
-        }
-        state.last_pressure = Some(pressure);
-
-        state.session.update_pressure(pressure, now);
-        #[cfg(feature = "demo")]
         state.session.update_scale(
             true,
             demo_scale.update(now.saturating_sub(demo_started_ms)),
@@ -642,27 +726,9 @@ fn main() {
             }
         }
 
-        pressure_history.rotate_left(1);
-        pressure_history[PRESSURE_HISTORY_LEN - 1] = pressure;
         weight_history.rotate_left(1);
         weight_history[PRESSURE_HISTORY_LEN - 1] =
             (state.session.shot_weight * 10.0).clamp(0.0, i16::MAX as f32) as i16;
-
-        state.bt_connected = ble_server.is_connected();
-        state.last_bt_send_successful = if state.bluetooth_on {
-            #[cfg(feature = "benchmark-soak")]
-            if state.bt_connected {
-                soak_pressure_notify_attempts = soak_pressure_notify_attempts.saturating_add(1);
-            }
-            let notified = ble_server.notify_pressure(pressure);
-            #[cfg(feature = "benchmark-soak")]
-            if state.bt_connected && notified {
-                soak_pressure_notify_successes = soak_pressure_notify_successes.saturating_add(1);
-            }
-            notified
-        } else {
-            false
-        };
 
         if now.saturating_sub(state.last_battery_read_ms) >= 1_000 {
             state.last_battery_read_ms = now;
@@ -680,14 +746,7 @@ fn main() {
         #[cfg(not(feature = "demo"))]
         let (scale_connected, scale_name) = (scale.connected, scale.name.as_str());
 
-        #[cfg(feature = "demo")]
-        let pressure_hex = "SIM SIM SIM";
-        #[cfg(not(feature = "demo"))]
-        let pressure_hex = pressure_sensor.last_hex_payload();
-        #[cfg(feature = "demo")]
         let max_sensor_pressure = 20_000;
-        #[cfg(not(feature = "demo"))]
-        let max_sensor_pressure = pressure_sensor.max_pressure_mbar();
 
         let ui_data = UiData {
             pressure_history: &pressure_history,
@@ -701,7 +760,7 @@ fn main() {
             scale_connected,
             scale_name,
             shot_time_tenths,
-            pressure_hex,
+            pressure_hex: &pressure_hex,
             debug_mode: state.debug_mode,
             last_refresh_ms: state.last_refresh_ms,
             last_activity_ms: state.last_activity_ms,
@@ -718,7 +777,7 @@ fn main() {
             #[cfg(feature = "benchmark")]
             let clear_ended_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
             let mut fb = FastFrameBuffer::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
-            if let Err(err) = draw_main_screen(&mut fb, ui_data) {
+            if let Err(err) = draw_main_screen_retained(&mut fb, ui_data) {
                 println!("UI draw failed: {err:?}");
             }
             #[cfg(feature = "benchmark")]
@@ -945,6 +1004,12 @@ fn run_display_benchmarks<SPI, DC, CS>(
 
     let mut render_stats = Box::new(BenchmarkStats::new("render_dynamic_ui", 0));
     let mut frame_stats = Box::new(BenchmarkStats::new("frame_dynamic", FRAME_BYTES));
+    initialize_main_screen(&mut FastFrameBuffer::new(
+        framebuffer,
+        DISPLAY_WIDTH,
+        DISPLAY_HEIGHT,
+    ))
+    .expect("benchmark framebuffer initialization failed");
     for iteration in 0..ITERATIONS {
         history.rotate_left(1);
         history[PRESSURE_HISTORY_LEN - 1] = ((iteration * 97) % 10_000) as i16;
@@ -973,9 +1038,8 @@ fn run_display_benchmarks<SPI, DC, CS>(
         let frame_started = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         let render_started = frame_started;
         {
-            clear_black(framebuffer);
             let mut fb = FastFrameBuffer::new(&mut *framebuffer, DISPLAY_WIDTH, DISPLAY_HEIGHT);
-            draw_main_screen(&mut fb, data).expect("benchmark render failed");
+            draw_main_screen_retained(&mut fb, data).expect("benchmark render failed");
         }
         let render_ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
         render_stats.record(render_ended.saturating_sub(render_started));

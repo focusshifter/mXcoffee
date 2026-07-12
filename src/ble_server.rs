@@ -7,8 +7,8 @@ use crate::settings::LastScaleConfig;
 use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
 use esp32_nimble::utilities::BleUuid;
 use esp32_nimble::{
-    uuid128, BLEAddress, BLEAddressType, BLEAdvertisementData, BLECharacteristic, BLEDevice,
-    BLEError, BLEScan, NimbleProperties,
+    uuid128, BLEAddress, BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEError, BLEScan,
+    NimbleProperties,
 };
 use mxcoffee::ble_protocol::{clamp_battery_level, PressureState, DEVICE_NAME};
 use mxcoffee::scale_protocol::{decode_lf_smart_scale_weight, matches_lf_smart_scale_name};
@@ -203,32 +203,8 @@ impl MxBleServer {
         owner: Arc<Self>,
         device: &'static BLEDevice,
     ) -> Result<(), BLEError> {
-        let preferred = owner.preferred_scale.lock().unwrap().clone();
-        if let Some(preferred) = preferred {
-            if preferred.scale_type == 1 {
-                let address_type = match preferred.address_type {
-                    1 => BLEAddressType::Random,
-                    2 => BLEAddressType::PublicID,
-                    3 => BLEAddressType::RandomID,
-                    _ => BLEAddressType::Public,
-                };
-                if let Some(address) = BLEAddress::from_str(&preferred.address, address_type) {
-                    println!(
-                        "BLE scale trying saved device: {} ({address})",
-                        preferred.name
-                    );
-                    if Self::connect_candidate(owner.clone(), device, address, preferred.name)
-                        .await
-                        .is_ok()
-                    {
-                        return Ok(());
-                    }
-                    println!("BLE saved scale unavailable; scanning");
-                }
-            }
-        }
-
         let mut scan = BLEScan::new();
+        let preferred = owner.preferred_scale.lock().unwrap().clone();
         let found = scan
             .active_scan(true)
             .interval(1_349)
@@ -249,7 +225,13 @@ impl MxBleServer {
         let Some((address, name)) = found else {
             return Ok(());
         };
-        println!("BLE scale discovered: {name} ({address})");
+        let saved = preferred
+            .as_ref()
+            .is_some_and(|scale| scale.scale_type == 1 && scale.address == address.to_string());
+        println!(
+            "BLE scale discovered{}: {name} ({address})",
+            if saved { " (saved)" } else { "" }
+        );
         Self::connect_candidate(owner, device, address, name).await
     }
 
