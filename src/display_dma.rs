@@ -2,6 +2,7 @@ pub const DISPLAY_WIDTH: usize = 320;
 pub const DISPLAY_HEIGHT: usize = 240;
 pub const BYTES_PER_PIXEL: usize = 2;
 pub const FRAME_BYTES: usize = DISPLAY_WIDTH * DISPLAY_HEIGHT * BYTES_PER_PIXEL;
+pub const FRAME_PIXELS: usize = DISPLAY_WIDTH * DISPLAY_HEIGHT;
 
 // ESP32 DMA descriptors have 12-bit size and length fields. ESP-IDF keeps
 // non-final payloads four-byte aligned and caps them at 4092 bytes.
@@ -24,6 +25,29 @@ pub struct DmaSegment {
 pub enum TransferPlanError {
     Empty,
     OutputTooSmall,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidFrameLength {
+    pub expected: usize,
+    pub actual: usize,
+}
+
+#[derive(Debug)]
+pub enum FrameTransferError<T> {
+    InvalidFrameLength(InvalidFrameLength),
+    Transport(T),
+}
+
+pub fn validate_frame_length(pixel_count: usize) -> Result<(), InvalidFrameLength> {
+    if pixel_count == FRAME_PIXELS {
+        Ok(())
+    } else {
+        Err(InvalidFrameLength {
+            expected: FRAME_PIXELS,
+            actual: pixel_count,
+        })
+    }
 }
 
 pub fn descriptor_count(total_len: usize) -> usize {
@@ -144,5 +168,24 @@ mod tests {
         assert_eq!(CASET, 0x2A);
         assert_eq!(PASET, 0x2B);
         assert_eq!(RAMWR, 0x2C);
+    }
+
+    #[test]
+    fn full_frame_length_is_exact() {
+        assert_eq!(validate_frame_length(FRAME_PIXELS), Ok(()));
+        assert_eq!(
+            validate_frame_length(FRAME_PIXELS - 1),
+            Err(InvalidFrameLength {
+                expected: FRAME_PIXELS,
+                actual: FRAME_PIXELS - 1,
+            })
+        );
+        assert_eq!(
+            validate_frame_length(FRAME_PIXELS + 1),
+            Err(InvalidFrameLength {
+                expected: FRAME_PIXELS,
+                actual: FRAME_PIXELS + 1,
+            })
+        );
     }
 }

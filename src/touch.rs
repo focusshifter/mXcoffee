@@ -47,6 +47,10 @@ impl TouchButtons {
         }
     }
 
+    pub fn has_active_touch(&self) -> bool {
+        self.previous.iter().copied().any(|active| active)
+    }
+
     pub fn poll(&mut self, i2c: &mut I2cDriver<'_>) -> Result<ButtonSnapshot, EspError> {
         let mut buffer = [0u8; 11];
 

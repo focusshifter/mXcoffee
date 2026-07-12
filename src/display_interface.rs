@@ -20,6 +20,7 @@ use esp_idf_sys::{
     MALLOC_CAP_SPIRAM,
 };
 use mipidsi::interface::{Interface, SpiError};
+use mxcoffee::display_dma::{validate_frame_length, FrameTransferError};
 
 const DMA_BUFFER_COUNT: usize = 2;
 const DMA_DESCRIPTOR_COUNT: usize = 5;
@@ -69,6 +70,15 @@ pub fn heap_metrics() -> HeapMetrics {
             heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
         },
     }
+}
+
+pub fn monotonic_time_us() -> u64 {
+    unsafe { esp_timer_get_time() as u64 }
+}
+
+#[cfg(all(feature = "benchmark", not(feature = "benchmark-soak")))]
+pub fn is_external_ram(pointer: *const u8) -> bool {
+    unsafe { esp_idf_sys::esp_ptr_external_ram(pointer.cast()) }
 }
 
 unsafe extern "C" {
@@ -219,6 +229,15 @@ where
     CS: OutputPin<Error = DC::Error>,
 {
     pub fn send_frame_queued(
+        &mut self,
+        pixels: &[Rgb565],
+    ) -> Result<(), FrameTransferError<SpiError<HalSpiError, DC::Error>>> {
+        validate_frame_length(pixels.len()).map_err(FrameTransferError::InvalidFrameLength)?;
+        self.send_frame_queued_inner(pixels)
+            .map_err(FrameTransferError::Transport)
+    }
+
+    fn send_frame_queued_inner(
         &mut self,
         pixels: &[Rgb565],
     ) -> Result<(), SpiError<HalSpiError, DC::Error>> {

@@ -3,13 +3,12 @@ use core::convert::Infallible;
 use embedded_graphics::{
     geometry::{OriginDimensions, Size},
     pixelcolor::Rgb565,
-    prelude::{DrawTarget, Pixel, Point},
+    prelude::{DrawTarget, Pixel, Point, RgbColor},
     primitives::Rectangle,
 };
 
 pub fn clear_black(pixels: &mut [Rgb565]) {
-    // Every RGB565 bit pattern is valid, and black is represented by zero.
-    unsafe { core::ptr::write_bytes(pixels.as_mut_ptr(), 0, pixels.len()) };
+    pixels.fill(Rgb565::BLACK);
 }
 
 pub fn clear_black_rect(
@@ -63,7 +62,7 @@ impl DrawTarget for FastFrameBuffer<'_> {
         for Pixel(Point { x, y }, color) in pixels {
             if x >= 0 && x < self.width as i32 && y >= 0 && y < self.height as i32 {
                 let index = y as usize * self.width + x as usize;
-                unsafe { *self.pixels.get_unchecked_mut(index) = color };
+                self.pixels[index] = color;
             }
         }
         Ok(())

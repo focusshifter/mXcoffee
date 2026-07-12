@@ -122,6 +122,12 @@ them, and the display worker has exclusive mutable access to the interface.
 Calling ESP-IDF C APIs is platform integration, not a C++ wrapper. Application
 state, rendering, UI, BLE, power, touch, and sensors remain Rust-owned.
 
+`send_frame_queued` rejects any slice other than exactly 76,800 RGB565 pixels
+before acquiring the bus. The host contract tests cover the exact length and
+both adjacent invalid lengths. Application timing, reboot, and framebuffer
+access use safe wrappers or checked Rust operations, so the display module is
+the only `src/` module containing `unsafe`.
+
 ## Source Attribution
 
 The transaction and DMA mechanics were ported from M5GFX 0.2.0
@@ -169,6 +175,26 @@ errors, watchdogs, and post-warmup heap loss were zero. The frame p50/p95/p99
 were 23/33/52 ms. This is a passing short-soak result, not a substitute for the
 required 30-minute connected-hardware soak. Raw JSON is stored in
 `benchmarks/results/2026-07-12-retained-ui-short-soak-40mhz.jsonl`.
+
+The subsequent 30-minute demo soak completed 51,187 frames (28.44 FPS
+wall-clock) and 89,981 pressure samples (49.98 Hz). Frame p50/p95/p99 were
+22/35/52 ms, maximum pressure gap was 23 ms, and connected host testing made
+4,428 pressure-notification attempts with zero loss. Display errors, watchdogs,
+resets, and PSRAM loss were zero; internal heap loss after warmup was 16 bytes.
+The run uses GPIO39 to gate FT6336 reads. The previous polling build was
+rejected after its legacy I2C driver entered an interrupt watchdog at 565
+seconds.
+
+Raw telemetry is in
+`benchmarks/results/2026-07-12-retained-ui-30min-soak-40mhz.jsonl` and is
+validated by `scripts/check-soak-benchmark.sh`. Physical pressure-sensor data
+and actual scale weight samples remain separate hardware parity gates.
+
+The production inactivity timeout remains ten minutes and now follows the C++
+firmware's AXP2101 shutdown behavior instead of merely blanking the backlight.
+The `poweroff-test` feature shortens only that timeout to 15 seconds. On the
+physical Core2 it removed power and disconnected USB at the expected timeout;
+physical power-button wake still requires operator confirmation.
 
 ## Diagnostic Builds
 

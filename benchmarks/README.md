@@ -22,6 +22,12 @@ Validate a captured JSONL file with:
 scripts/check-display-benchmark.sh benchmarks/results/2026-07-11-raw-8k-psram80-40mhz.jsonl
 ```
 
+Validate a 30-minute whole-application soak with:
+
+```sh
+scripts/check-soak-benchmark.sh benchmarks/results/<soak-capture>.jsonl
+```
+
 Visual inspection of alternating solid frames and the RGB/checkerboard pattern
 is still required; serial timing cannot detect color or pixel corruption.
 Use `--features benchmark-soak` for the additional 1,000-upload run.

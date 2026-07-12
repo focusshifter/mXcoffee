@@ -17,6 +17,7 @@ use display_interface::FastSpiInterface;
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::RgbColor;
 use esp_idf_hal::delay::{FreeRtos, TickType};
+use esp_idf_hal::gpio::PinDriver;
 use esp_idf_hal::i2c::{I2cConfig, I2cDriver};
 use esp_idf_hal::peripherals::Peripherals;
 use esp_idf_hal::prelude::*;
@@ -44,7 +45,11 @@ const DISPLAY_WIDTH: usize = 320;
 const DISPLAY_HEIGHT: usize = 240;
 const PIXEL_COUNT: usize = DISPLAY_WIDTH * DISPLAY_HEIGHT;
 const PRESSURE_HISTORY_LEN: usize = 160;
+const HISTORY_SAMPLE_INTERVAL_MS: u64 = 30_000 / PRESSURE_HISTORY_LEN as u64;
+#[cfg(not(feature = "poweroff-test"))]
 const AUTO_OFF_TIMEOUT_MS: u64 = 10 * 60 * 1_000;
+#[cfg(feature = "poweroff-test")]
+const AUTO_OFF_TIMEOUT_MS: u64 = 15_000;
 const REFRESH_INTERVAL_MS: u64 = 20;
 const DISPLAY_SPI_HZ: u32 = 40_000_000;
 const DISPLAY_TRANSFER_BUFFER_SIZE: usize = 8 * 1024;
@@ -84,7 +89,6 @@ fn exchange_frame(
 }
 
 struct DeviceState {
-    is_asleep: bool,
     bluetooth_on: bool,
     bt_connected: bool,
     last_bt_send_successful: bool,
@@ -103,7 +107,6 @@ struct DeviceState {
 impl DeviceState {
     fn new(now_ms: u64, bluetooth_on: bool) -> Self {
         Self {
-            is_asleep: false,
             bluetooth_on,
             bt_connected: false,
             last_bt_send_successful: false,
@@ -126,7 +129,7 @@ impl DeviceState {
 }
 
 fn now_ms() -> u64 {
-    unsafe { (esp_idf_sys::esp_timer_get_time() as u64) / 1_000 }
+    display_interface::monotonic_time_us() / 1_000
 }
 
 fn read_battery_percentage(i2c: &mut I2cDriver<'_>) -> Result<u8, EspError> {
@@ -249,6 +252,22 @@ fn set_core2_backlight(i2c: &mut I2cDriver<'_>, enabled: bool) -> Result<(), Esp
     )
 }
 
+fn power_off_core2(i2c: &mut I2cDriver<'_>) -> Result<(), EspError> {
+    const REG_POWER_OFF: u8 = 0x10;
+    let mut current = [0u8; 1];
+    i2c.write_read(
+        AXP2101_ADDR,
+        &[REG_POWER_OFF],
+        &mut current,
+        TickType::new_millis(10).ticks(),
+    )?;
+    i2c.write(
+        AXP2101_ADDR,
+        &[REG_POWER_OFF, current[0] | 0x01],
+        TickType::new_millis(10).ticks(),
+    )
+}
+
 fn main() {
     let peripherals = Peripherals::take().unwrap();
     let gpios = peripherals.pins;
@@ -289,6 +308,7 @@ fn main() {
         &I2cConfig::new().baudrate(400_000.Hz()),
     )
     .unwrap();
+    let touch_interrupt = PinDriver::input(gpios.gpio39).unwrap();
 
     let mut power_configured = false;
     for _ in 0..3 {
@@ -365,6 +385,7 @@ fn main() {
     });
 
     let mut state = DeviceState::new(now_ms(), bluetooth_enabled);
+    let mut last_history_sample_ms = now_ms();
     #[cfg(feature = "demo")]
     let demo_started_ms = now_ms();
     #[cfg(feature = "demo")]
@@ -490,7 +511,7 @@ fn main() {
                 match frame_rx.try_recv() {
                     Ok(frame) => {
                         #[cfg(feature = "benchmark")]
-                        let upload_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+                        let upload_started_us = display_interface::monotonic_time_us();
                         if let Err(err) = display_interface.send_frame_queued(frame.as_ref()) {
                             #[cfg(feature = "benchmark-soak")]
                             worker_display_errors.fetch_add(1, Ordering::Relaxed);
@@ -498,7 +519,7 @@ fn main() {
                         }
                         #[cfg(feature = "benchmark")]
                         {
-                            let completed_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+                            let completed_us = display_interface::monotonic_time_us();
                             if completed_frames < 105 {
                                 upload_stats.record(completed_us.saturating_sub(upload_started_us));
                             }
@@ -580,7 +601,7 @@ fn main() {
 
     loop {
         #[cfg(feature = "benchmark")]
-        let pipeline_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        let pipeline_started_us = display_interface::monotonic_time_us();
         let now = now_ms();
         let frame_start = now;
 
@@ -597,9 +618,6 @@ fn main() {
             state
                 .session
                 .update_pressure(pressure, sample.sampled_at_ms);
-            pressure_history.rotate_left(1);
-            pressure_history[PRESSURE_HISTORY_LEN - 1] = pressure;
-
             state.bt_connected = ble_server.is_connected();
             if state.bluetooth_on {
                 #[cfg(feature = "benchmark-soak")]
@@ -618,21 +636,13 @@ fn main() {
             }
         }
 
-        let buttons = touch_buttons.poll(&mut internal_i2c).unwrap_or_default();
+        let buttons = if touch_interrupt.is_low() || touch_buttons.has_active_touch() {
+            touch_buttons.poll(&mut internal_i2c).unwrap_or_default()
+        } else {
+            Default::default()
+        };
         if buttons.any_pressed() {
             state.record_activity(now);
-        }
-
-        if state.is_asleep {
-            if buttons.any_pressed() {
-                set_core2_backlight(&mut internal_i2c, true).ok();
-                state.is_asleep = false;
-                state.last_refresh_ms = 0;
-                continue;
-            } else {
-                FreeRtos::delay_ms(50);
-                continue;
-            }
         }
 
         if buttons.is_pressed(Button::A) {
@@ -678,16 +688,23 @@ fn main() {
             }
             let _ = exchange_frame(&frame_tx, &available_rx, framebuffer);
             FreeRtos::delay_ms(200);
-            unsafe { esp_idf_sys::esp_restart() };
+            esp_idf_hal::reset::restart();
         }
 
         if !cfg!(feature = "benchmark-soak")
-            && !state.is_asleep
             && now.saturating_sub(state.last_activity_ms) >= AUTO_OFF_TIMEOUT_MS
         {
             set_core2_backlight(&mut internal_i2c, false).ok();
-            state.is_asleep = true;
-            continue;
+            FreeRtos::delay_ms(20);
+            if let Err(err) = power_off_core2(&mut internal_i2c) {
+                println!("Failed to power off: {err:?}");
+                set_core2_backlight(&mut internal_i2c, true).ok();
+                state.record_activity(now);
+            } else {
+                loop {
+                    FreeRtos::delay_ms(1_000);
+                }
+            }
         }
 
         if now.saturating_sub(state.last_refresh_ms) < REFRESH_INTERVAL_MS {
@@ -726,9 +743,14 @@ fn main() {
             }
         }
 
-        weight_history.rotate_left(1);
-        weight_history[PRESSURE_HISTORY_LEN - 1] =
-            (state.session.shot_weight * 10.0).clamp(0.0, i16::MAX as f32) as i16;
+        if now.saturating_sub(last_history_sample_ms) >= HISTORY_SAMPLE_INTERVAL_MS {
+            last_history_sample_ms = now;
+            pressure_history.rotate_left(1);
+            pressure_history[PRESSURE_HISTORY_LEN - 1] = pressure;
+            weight_history.rotate_left(1);
+            weight_history[PRESSURE_HISTORY_LEN - 1] =
+                (state.session.shot_weight * 10.0).clamp(0.0, i16::MAX as f32) as i16;
+        }
 
         if now.saturating_sub(state.last_battery_read_ms) >= 1_000 {
             state.last_battery_read_ms = now;
@@ -771,11 +793,11 @@ fn main() {
         };
 
         #[cfg(feature = "benchmark")]
-        let render_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        let render_started_us = display_interface::monotonic_time_us();
         {
             let fb_buf = framebuffer.as_mut();
             #[cfg(feature = "benchmark")]
-            let clear_ended_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+            let clear_ended_us = display_interface::monotonic_time_us();
             let mut fb = FastFrameBuffer::new(fb_buf, DISPLAY_WIDTH, DISPLAY_HEIGHT);
             if let Err(err) = draw_main_screen_retained(&mut fb, ui_data) {
                 println!("UI draw failed: {err:?}");
@@ -783,16 +805,16 @@ fn main() {
             #[cfg(feature = "benchmark")]
             {
                 pipeline_clear_stats.record(clear_ended_us.saturating_sub(render_started_us));
-                let ui_ended_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+                let ui_ended_us = display_interface::monotonic_time_us();
                 pipeline_ui_stats.record(ui_ended_us.saturating_sub(clear_ended_us));
             }
         }
         #[cfg(feature = "benchmark")]
-        let exchange_started_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        let exchange_started_us = display_interface::monotonic_time_us();
 
         framebuffer = exchange_frame(&frame_tx, &available_rx, framebuffer);
         #[cfg(feature = "benchmark")]
-        let exchange_ended_us = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        let exchange_ended_us = display_interface::monotonic_time_us();
 
         let frame_end = now_ms();
         let frame_duration = frame_end.saturating_sub(frame_start);
@@ -919,7 +941,7 @@ fn run_display_benchmarks<SPI, DC, CS>(
             "\"width\":{},\"height\":{}}}"
         ),
         DISPLAY_SPI_HZ,
-        unsafe { esp_idf_sys::esp_ptr_external_ram(framebuffer.as_ptr().cast()) },
+        display_interface::is_external_ram(framebuffer.as_ptr().cast()),
         FRAME_BYTES,
         DISPLAY_TRANSFER_BUFFER_SIZE,
         DISPLAY_WIDTH,
@@ -934,11 +956,11 @@ fn run_display_benchmarks<SPI, DC, CS>(
             Rgb565::new(0, 0, 31)
         };
         framebuffer.fill(color);
-        let started = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        let started = display_interface::monotonic_time_us();
         display
             .send_frame_queued(framebuffer)
             .expect("benchmark SPI transfer failed");
-        let ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        let ended = display_interface::monotonic_time_us();
         spi_stats.record(ended.saturating_sub(started));
         FreeRtos::delay_ms(1);
     }
@@ -1035,18 +1057,18 @@ fn run_display_benchmarks<SPI, DC, CS>(
             frame_indicator: iteration % 2 == 0,
         };
 
-        let frame_started = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        let frame_started = display_interface::monotonic_time_us();
         let render_started = frame_started;
         {
             let mut fb = FastFrameBuffer::new(&mut *framebuffer, DISPLAY_WIDTH, DISPLAY_HEIGHT);
             draw_main_screen_retained(&mut fb, data).expect("benchmark render failed");
         }
-        let render_ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        let render_ended = display_interface::monotonic_time_us();
         render_stats.record(render_ended.saturating_sub(render_started));
         display
             .send_frame_queued(framebuffer)
             .expect("benchmark frame transfer failed");
-        let frame_ended = unsafe { esp_idf_sys::esp_timer_get_time() as u64 };
+        let frame_ended = display_interface::monotonic_time_us();
         frame_stats.record(frame_ended.saturating_sub(frame_started));
         FreeRtos::delay_ms(1);
     }
