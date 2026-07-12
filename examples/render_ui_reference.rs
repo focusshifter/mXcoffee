@@ -5,13 +5,14 @@ use embedded_graphics::pixelcolor::{IntoStorage, Rgb565};
 use embedded_graphics::prelude::RgbColor;
 use mxcoffee::fast_framebuffer::FastFrameBuffer;
 use mxcoffee::ui::{
-    build_reference_histories, draw_main_screen, UiData, HEIGHT, HISTORY_LEN, WIDTH,
+    build_reference_histories, draw_main_screen, draw_splash, UiData, HEIGHT, HISTORY_LEN, WIDTH,
 };
 
 fn main() {
     let output = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "benchmarks/screenshots/rust-reference.bmp".into());
+    let render_splash = std::env::args().nth(2).as_deref() == Some("--splash");
     let mut pressure = [0; HISTORY_LEN];
     let mut weight = [0; HISTORY_LEN];
     let mut times = [0; HISTORY_LEN];
@@ -19,31 +20,35 @@ fn main() {
 
     let mut pixels = vec![Rgb565::BLACK; WIDTH as usize * HEIGHT as usize];
     let mut target = FastFrameBuffer::new(&mut pixels, WIDTH as usize, HEIGHT as usize);
-    draw_main_screen(
-        &mut target,
-        UiData {
-            pressure_history: &pressure,
-            weight_history_tenths: &weight,
-            history_times_ms: &times,
-            last_pressure: 8_400,
-            max_sensor_pressure: 20_000,
-            shot_weight: 21.8,
-            flow_rate: 1.0,
-            bluetooth_on: true,
-            scale_connected: true,
-            scale_name: "LFSMART SCALE",
-            shot_time_tenths: 123,
-            pressure_hex: "reference",
-            debug_mode: false,
-            last_refresh_ms: 0,
-            last_activity_ms: 0,
-            now_ms: 0,
-            auto_off_timeout_ms: 600_000,
-            timer_running: true,
-            frame_indicator: None,
-        },
-    )
-    .unwrap();
+    if render_splash {
+        draw_splash(&mut target).unwrap();
+    } else {
+        draw_main_screen(
+            &mut target,
+            UiData {
+                pressure_history: &pressure,
+                weight_history_tenths: &weight,
+                history_times_ms: &times,
+                last_pressure: 8_400,
+                max_sensor_pressure: 20_000,
+                shot_weight: 21.8,
+                flow_rate: 1.0,
+                bluetooth_on: true,
+                scale_connected: true,
+                scale_name: "LFSMART SCALE",
+                shot_time_tenths: 123,
+                pressure_hex: "reference",
+                debug_mode: false,
+                last_refresh_ms: 0,
+                last_activity_ms: 0,
+                now_ms: 0,
+                auto_off_timeout_ms: 600_000,
+                timer_running: true,
+                frame_indicator: None,
+            },
+        )
+        .unwrap();
+    }
 
     write_bmp(&output, &pixels).expect("failed to write Rust UI reference BMP");
     println!("wrote {output}");

@@ -32,7 +32,7 @@ use mipidsi::{models::ILI9342CRgb565, Builder};
 use mxcoffee::fast_framebuffer::{clear_black, FastFrameBuffer};
 use mxcoffee::session::SessionState;
 use mxcoffee::ui::{
-    draw_center_message, draw_main_screen_retained, initialize_main_screen, UiData,
+    draw_center_message, draw_main_screen_retained, draw_splash, initialize_main_screen, UiData,
 };
 #[cfg(feature = "benchmark-soak")]
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -427,6 +427,16 @@ fn main() {
     #[cfg(feature = "demo")]
     let mut demo_scale = mxcoffee::demo::SimulatedScale::default();
     let mut framebuffer = Box::new([Rgb565::BLACK; PIXEL_COUNT]);
+    draw_splash(&mut FastFrameBuffer::new(
+        framebuffer.as_mut(),
+        DISPLAY_WIDTH,
+        DISPLAY_HEIGHT,
+    ))
+    .unwrap();
+    display_interface
+        .send_frame_queued(framebuffer.as_ref())
+        .expect("failed to display splash screen");
+    FreeRtos::delay_ms(1_000);
     initialize_main_screen(&mut FastFrameBuffer::new(
         framebuffer.as_mut(),
         DISPLAY_WIDTH,

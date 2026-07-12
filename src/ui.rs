@@ -23,6 +23,7 @@ const BAR_X: i32 = 280;
 const BAR_WIDTH: u32 = 30;
 
 const MOON_GLOSS_16: &[u8] = include_bytes!("../assets/fonts/MoonGloss_16.vlw");
+const MOON_GLOSS_24: &[u8] = include_bytes!("../assets/fonts/MoonGloss_24_Logo.vlw");
 const MOON_GLOSS_48: &[u8] = include_bytes!("../assets/fonts/MoonGloss_48_Numeric.vlw");
 
 const DARK_BG: Rgb565 = rgb(0x03, 0x16, 0x1e);
@@ -36,6 +37,7 @@ const BAR_BG: Rgb565 = rgb(0x0a, 0x3b, 0x44);
 const ACCENT_BG_SOURCE: Rgb888 = Rgb888::new(0x96, 0xcb, 0xbb);
 const ACCENT_TEXT_SOURCE: Rgb888 = Rgb888::new(0x0a, 0x3b, 0x44);
 const PANEL_TEXT_SOURCE: Rgb888 = Rgb888::new(0xdd, 0xfe, 0xee);
+const SPLASH_TEXT_SOURCE: Rgb888 = Rgb888::new(0xe6, 0xff, 0xff);
 
 const fn rgb(red: u8, green: u8, blue: u8) -> Rgb565 {
     Rgb565::new(red >> 3, green >> 2, blue >> 3)
@@ -61,6 +63,84 @@ pub struct UiData<'a> {
     pub auto_off_timeout_ms: u64,
     pub timer_running: bool,
     pub frame_indicator: Option<bool>,
+}
+
+pub fn draw_splash<T>(target: &mut T) -> Result<(), T::Error>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    const BROWN: Rgb565 = rgb(0x5a, 0x3a, 0x1a);
+    const LATTE: Rgb565 = rgb(0xf4, 0xe5, 0xc3);
+    const SEGMENTS: i32 = 20;
+    const INV_SQRT_2: f32 = 0.707_106_77;
+
+    target.clear(Rgb565::BLACK)?;
+    let font = VlwFont::new(MOON_GLOSS_24).unwrap();
+    let font_height = font.height();
+    let x_size = (font_height as f32 * 1.1) as i32;
+    let width_m = font.measure("m").unwrap();
+    let width_coffee = font.measure("coffee").unwrap();
+    let start_x = (WIDTH - width_m - x_size - width_coffee) / 2;
+    let text_y = (HEIGHT - font_height) / 2;
+    let center_x = start_x + width_m + x_size / 2 - 1;
+    let center_y = text_y + font_height / 2 + 2;
+    let radius = (x_size as f32 * 0.55) as i32;
+
+    font.draw(
+        target,
+        "m",
+        Point::new(start_x, text_y),
+        SPLASH_TEXT_SOURCE,
+        Rgb888::BLACK,
+    )?;
+    font.draw(
+        target,
+        "coffee",
+        Point::new(start_x + width_m + x_size, text_y),
+        SPLASH_TEXT_SOURCE,
+        Rgb888::BLACK,
+    )?;
+
+    target.draw_iter((-radius..=radius).flat_map(|y| {
+        (-radius..=radius).filter_map(move |x| {
+            (x * x + y * y <= radius * radius)
+                .then_some(Pixel(Point::new(center_x + x, center_y + y), BROWN))
+        })
+    }))?;
+
+    let length = radius as f32 * 0.6;
+    let curve_amplitude = radius as f32 * 0.45;
+    for (base_x, base_y, perpendicular_x, perpendicular_y) in [
+        (INV_SQRT_2, INV_SQRT_2, -INV_SQRT_2, INV_SQRT_2),
+        (INV_SQRT_2, -INV_SQRT_2, INV_SQRT_2, INV_SQRT_2),
+    ] {
+        for segment in 0..SEGMENTS {
+            let t1 = -1.0 + 2.0 * segment as f32 / SEGMENTS as f32;
+            let t2 = -1.0 + 2.0 * (segment + 1) as f32 / SEGMENTS as f32;
+            let offset1 = (t1 * core::f32::consts::PI).sin() * curve_amplitude;
+            let offset2 = (t2 * core::f32::consts::PI).sin() * curve_amplitude;
+            let ax = t1 * length + offset1 * perpendicular_x;
+            let ay = t1 * length + offset1 * perpendicular_y;
+            let bx = t2 * length + offset2 * perpendicular_x;
+            let by = t2 * length + offset2 * perpendicular_y;
+            let start = Point::new(
+                center_x + (base_x * ax - base_y * ay) as i32,
+                center_y + (base_y * ax + base_x * ay) as i32,
+            );
+            let end = Point::new(
+                center_x + (base_x * bx - base_y * by) as i32,
+                center_y + (base_y * bx + base_x * by) as i32,
+            );
+            draw_m5_line(target, start, end, LATTE)?;
+            draw_m5_line(
+                target,
+                start + Point::new(1, 0),
+                end + Point::new(1, 0),
+                LATTE,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 pub fn draw_main_screen<T>(target: &mut T, data: UiData<'_>) -> Result<(), T::Error>
@@ -560,6 +640,24 @@ mod tests {
             pixels[(GRAPH_Y as usize + GRAPH_HEIGHT as usize) * WIDTH as usize + GRAPH_X as usize],
             DARK_BG
         );
+    }
+
+    #[test]
+    fn splash_logo_is_centered_and_nonempty() {
+        let mut pixels = [Rgb565::BLACK; WIDTH as usize * HEIGHT as usize];
+        let mut target = FastFrameBuffer::new(&mut pixels, WIDTH as usize, HEIGHT as usize);
+        draw_splash(&mut target).unwrap();
+
+        let drawn: Vec<_> = pixels
+            .iter()
+            .enumerate()
+            .filter(|(_, pixel)| **pixel != Rgb565::BLACK)
+            .map(|(index, _)| (index % WIDTH as usize, index / WIDTH as usize))
+            .collect();
+        assert!(drawn.len() > 500);
+        assert!(drawn
+            .iter()
+            .all(|(x, y)| (90..230).contains(x) && (100..140).contains(y)));
     }
 
     #[test]

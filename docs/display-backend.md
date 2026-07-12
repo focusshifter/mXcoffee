@@ -238,10 +238,14 @@ M5GFX VLW path: it parses the big-endian header and glyph records, renders the
 space advances, and reproduces its RGB888-to-RGB565 alpha blending.
 
 MoonGloss 16 retains the full printable ASCII set because Bluetooth scale names
-are dynamic. MoonGloss 48 is subset to `0-9` and `.` because it is used only by
-the nonnegative shot-time and pressure fields. This reduces embedded font data
-from 69 KB to 17 KB and keeps the release image within the application
-partition.
+are dynamic. MoonGloss 48 is subset to `0-9` and `.`, and MoonGloss 24 is
+subset to the five glyphs used by the boot logo. This reduces embedded font
+data from 86 KB to about 18 KB and keeps the release image within the
+application partition.
+
+The one-second `mXcoffee` boot splash follows the C++ geometry and drawing
+sequence before the display worker starts. Its host-rendered regression artifact
+is `benchmarks/screenshots/2026-07-12-rust-splash.png`.
 
 `scripts/render-ui-reference.sh` renders the Rust dashboard and requires exact
 pixel equality with the C++ screenshot oracle. The 2026-07-12 parity result is
