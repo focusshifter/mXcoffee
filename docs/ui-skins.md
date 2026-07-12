@@ -1,0 +1,129 @@
+# UI Skins
+
+## Rendering Contract
+
+The UI renders a fixed 320x240 RGB565 framebuffer. Skin colors are authored as
+RGB888 values, but every `SkinColor` also contains the deterministic truncated
+RGB565 value used by firmware. The display backend, framebuffer size, and SPI
+transfer format do not change when a skin changes.
+
+`src/ui.rs` owns screen composition and the compatibility entry points used by
+firmware. The implementation is split by responsibility:
+
+- `src/ui/theme.rs`: semantic RGB888 colors and RGB565 conversion;
+- `src/ui/layout.rs`: typed panel, graph, bar, status, debug, and damage regions;
+- `src/ui/skin.rs`: skin identity, fonts, and typed bitmap assets;
+- `src/ui/dashboard.rs`: dashboard panels, values, status, messages, and assets;
+- `src/ui/graph.rs`: curves, antialiasing, line rasterization, and pressure bar;
+- `src/ui/splash.rs`: splash composition.
+
+`CLASSIC` remains the firmware default. The older functions without a skin
+argument delegate to it, so firmware behavior cannot change merely because a
+new skin is added.
+
+## Theme Colors
+
+Define semantic colors once with `SkinColor::new(red, green, blue)`. Do not add
+parallel RGB565 and RGB888 constants. VLW font blending uses the RGB888 source;
+solid framebuffer drawing uses the paired RGB565 value.
+
+The simulator's Core2 preview is an optical post-process and is not part of a
+skin. Press `P` to inspect authoritative raw RGB565 output.
+
+## Layout
+
+Each skin owns a `DashboardLayout`. Coordinates are fixed pixels because the
+Core2 is a fixed 320x240 target. Panel frames, inner clear regions, text
+anchors, graph geometry, pressure bar, status band, debug origin, and frame
+indicator must be defined through the layout rather than in component code.
+
+The graph's retained clear rectangle belongs to `GraphLayout`. Moving the plot
+therefore requires updating the same typed layout definition that controls its
+damage region. `DashboardLayout::is_valid` rejects regions outside the screen.
+
+## Bitmap Assets
+
+`BitmapAsset` is a typed row-major RGB565 pixel slice with an optional RGB565
+transparent key. `PositionedBitmapAsset` places it in the static dashboard.
+Assets are drawn only when a framebuffer's static screen is initialized, not
+on every dynamic frame. The steady-state render loop performs no image parsing
+or allocation.
+
+Current proof assets are Rust constants. A production illustrated skin should
+use a build-time converter that emits the same typed representation from
+source PNG files. Runtime PNG/JPEG decoding is intentionally outside the
+firmware contract.
+
+Memory reference:
+
+| Asset | RGB565 bytes |
+| --- | ---: |
+| Full 320x240 background | 153,600 |
+| 32x32 icon | 2,048 |
+| 16x16 icon | 512 |
+
+Assets live in flash. A full static background does not require another
+permanent PSRAM framebuffer, but it does increase firmware or filesystem size.
+
+## Native Artwork Rules
+
+- Author the final composition at 320x240; do not downscale a desktop mockup.
+- Test every label and numeric extreme on the physical Core2.
+- Reserve uncluttered, opaque regions behind changing values and graphs.
+- Keep decoration outside dynamic clear rectangles unless it is intentionally
+  redrawn as part of that component.
+- Prefer pixel-authored borders and icons over subpixel detail that disappears
+  in RGB565.
+- Check raw RGB565 and approximate Core2-preview modes in the simulator.
+- Treat the coffee/alchemy reference as visual direction, not a source bitmap.
+
+## Development Workflow
+
+Run the simulator:
+
+```sh
+cargo +stable run --example ui_simulator --target x86_64-unknown-linux-gnu
+```
+
+Press `S` to switch between Classic and Workshop. A switch clears and
+reinitializes the complete retained framebuffer. Press `P` to toggle the Core2
+optical preview.
+
+Validate skin definitions and deterministic references:
+
+```sh
+scripts/validate-ui-skins.sh
+```
+
+Measure retained host render time and FPS for every skin:
+
+```sh
+cargo +stable run --release --example ui_render_benchmark \
+  --target x86_64-unknown-linux-gnu
+```
+
+The check validates layout and asset bounds, runs the RGB565 checksum
+regressions, renders both skins, and compares Classic with the tracked C++-exact
+reference. Before accepting a production skin, also flash it to the Core2 and
+run the display benchmark because host rendering cannot validate PSRAM or LCD
+cadence.
+
+The initial host results are stored in
+`benchmarks/results/2026-07-12-skin-ready-ui-host.jsonl`. They are useful for
+tracking renderer regressions, but physical Core2 results remain the acceptance
+gate.
+
+## Adding a Skin
+
+1. Add a semantic `Theme` in `theme.rs`.
+2. Add a bounded `DashboardLayout` in `layout.rs`.
+3. Convert fonts and bitmaps into typed static assets.
+4. Define the `Skin` in `skin.rs` and include it in the validity test.
+5. Add a deterministic RGB565 checksum and inspectable reference image.
+6. Add simulator selection without changing the firmware default.
+7. Verify retained redraw after switching from every existing skin.
+8. Record host render time and physical-device frame time/FPS.
+
+The next art milestone is a dedicated native 320x240 coffee/alchemy skin. Its
+first deliverable should be a low-detail readability prototype on the physical
+display, followed by ornamentation within the measured flash and render budget.

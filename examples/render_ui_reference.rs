@@ -5,16 +5,23 @@ use embedded_graphics::pixelcolor::{IntoStorage, Rgb565};
 use embedded_graphics::prelude::RgbColor;
 use mxcoffee::fast_framebuffer::FastFrameBuffer;
 use mxcoffee::ui::{
-    build_reference_histories, draw_main_screen, draw_splash, UiData, HEIGHT, HISTORY_LEN, WIDTH,
+    build_reference_histories, draw_main_screen_with_skin, draw_splash_with_skin, UiData, CLASSIC,
+    HEIGHT, HISTORY_LEN, WIDTH, WORKSHOP,
 };
 
 fn main() {
     let output = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "benchmarks/screenshots/rust-reference.bmp".into());
-    let render_splash = std::env::args().nth(2).as_deref() == Some("--splash");
-    let render_debug = std::env::args().nth(2).as_deref() == Some("--debug");
-    let render_antialias = std::env::args().nth(2).as_deref() == Some("--aa");
+    let arguments: Vec<_> = std::env::args().skip(2).collect();
+    let render_splash = arguments.iter().any(|argument| argument == "--splash");
+    let render_debug = arguments.iter().any(|argument| argument == "--debug");
+    let render_antialias = arguments.iter().any(|argument| argument == "--aa");
+    let skin = if arguments.iter().any(|argument| argument == "--workshop") {
+        &WORKSHOP
+    } else {
+        &CLASSIC
+    };
     let mut pressure = [0; HISTORY_LEN];
     let mut weight = [0; HISTORY_LEN];
     let mut times = [0; HISTORY_LEN];
@@ -23,9 +30,9 @@ fn main() {
     let mut pixels = vec![Rgb565::BLACK; WIDTH as usize * HEIGHT as usize];
     let mut target = FastFrameBuffer::new(&mut pixels, WIDTH as usize, HEIGHT as usize);
     if render_splash {
-        draw_splash(&mut target).unwrap();
+        draw_splash_with_skin(&mut target, skin).unwrap();
     } else {
-        draw_main_screen(
+        draw_main_screen_with_skin(
             &mut target,
             UiData {
                 pressure_history: &pressure,
@@ -49,6 +56,7 @@ fn main() {
                 frame_indicator: None,
                 antialias_graph: render_debug || render_antialias,
             },
+            skin,
         )
         .unwrap();
     }

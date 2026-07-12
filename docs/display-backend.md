@@ -296,8 +296,11 @@ RGB565 colors; raw mode remains authoritative for pixel and oracle comparisons
 because the optical preview is not a calibrated display profile. Controls are
 `D` for the debug overlay, `B` for Bluetooth status, `A` to
 compare aliased and antialiased graphs, `Space` to pause, `R` to restart the
-simulated shot, and `Esc` to quit. The shot automatically repeats every 40
+simulated shot, `S` to switch between Classic and Workshop skins, and `Esc` to quit. The shot automatically repeats every 40
 seconds.
+
+Skin architecture and the native 320x240 asset workflow are documented in
+`docs/ui-skins.md`.
 
 ## Diagnostic Builds
 

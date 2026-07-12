@@ -7,8 +7,8 @@ use mxcoffee::demo::{simulated_pressure_mbar, SimulatedScale};
 use mxcoffee::fast_framebuffer::FastFrameBuffer;
 use mxcoffee::session::SessionState;
 use mxcoffee::ui::{
-    draw_main_screen_retained, draw_splash, initialize_main_screen, UiData, HEIGHT, HISTORY_LEN,
-    WIDTH,
+    draw_main_screen_retained_with_skin, draw_splash_with_skin, initialize_main_screen_with_skin,
+    Skin, UiData, CLASSIC, HEIGHT, HISTORY_LEN, WIDTH, WORKSHOP,
 };
 
 const HISTORY_INTERVAL_MS: u64 = 30_000 / HISTORY_LEN as u64;
@@ -16,7 +16,7 @@ const SHOT_CYCLE_MS: u64 = 40_000;
 
 fn main() {
     let mut window = Window::new(
-        "mXcoffee Rust UI Simulator - approximate Core2 preview",
+        &window_title(&CLASSIC, true),
         WIDTH as usize,
         HEIGHT as usize,
         WindowOptions {
@@ -29,7 +29,7 @@ fn main() {
     window.set_target_fps(50);
 
     println!(
-        "D debug | B Bluetooth | A antialias | P panel preview | Space pause | R restart | Esc quit"
+        "D debug | B Bluetooth | A antialias | S skin | P panel preview | Space pause | R restart | Esc quit"
     );
 
     let mut pixels = vec![Rgb565::BLACK; WIDTH as usize * HEIGHT as usize];
@@ -48,6 +48,7 @@ fn main() {
     let mut bluetooth = true;
     let mut antialias = true;
     let mut panel_preview = true;
+    let mut skin = &CLASSIC;
     let mut frame_indicator = false;
     let mut static_screen_initialized = false;
 
@@ -63,11 +64,16 @@ fn main() {
         }
         if window.is_key_pressed(Key::P, KeyRepeat::No) {
             panel_preview = !panel_preview;
-            window.set_title(if panel_preview {
-                "mXcoffee Rust UI Simulator - approximate Core2 preview"
+            window.set_title(&window_title(skin, panel_preview));
+        }
+        if window.is_key_pressed(Key::S, KeyRepeat::No) {
+            skin = if skin.id == CLASSIC.id {
+                &WORKSHOP
             } else {
-                "mXcoffee Rust UI Simulator - raw RGB565"
-            });
+                &CLASSIC
+            };
+            static_screen_initialized = false;
+            window.set_title(&window_title(skin, panel_preview));
         }
         if window.is_key_pressed(Key::Space, KeyRepeat::No) {
             if let Some(instant) = paused_at.take() {
@@ -112,11 +118,10 @@ fn main() {
             .as_millis() as u64;
 
         if elapsed < 1_000 {
-            draw_splash(&mut FastFrameBuffer::new(
-                &mut pixels,
-                WIDTH as usize,
-                HEIGHT as usize,
-            ))
+            draw_splash_with_skin(
+                &mut FastFrameBuffer::new(&mut pixels, WIDTH as usize, HEIGHT as usize),
+                skin,
+            )
             .unwrap();
             static_screen_initialized = false;
         } else {
@@ -136,10 +141,10 @@ fn main() {
 
             let mut target = FastFrameBuffer::new(&mut pixels, WIDTH as usize, HEIGHT as usize);
             if !static_screen_initialized {
-                initialize_main_screen(&mut target).unwrap();
+                initialize_main_screen_with_skin(&mut target, skin).unwrap();
                 static_screen_initialized = true;
             }
-            draw_main_screen_retained(
+            draw_main_screen_retained_with_skin(
                 &mut target,
                 UiData {
                     pressure_history: &pressure_history,
@@ -163,6 +168,7 @@ fn main() {
                     frame_indicator: Some(frame_indicator),
                     antialias_graph: antialias,
                 },
+                skin,
             )
             .unwrap();
             frame_indicator = !frame_indicator;
@@ -173,6 +179,18 @@ fn main() {
             .update_with_buffer(&window_pixels, WIDTH as usize, HEIGHT as usize)
             .expect("failed to update simulator window");
     }
+}
+
+fn window_title(skin: &Skin, panel_preview: bool) -> String {
+    format!(
+        "mXcoffee Rust UI Simulator - {} - {}",
+        skin.name,
+        if panel_preview {
+            "approximate Core2 preview"
+        } else {
+            "raw RGB565"
+        }
+    )
 }
 
 fn reset_cycle(
