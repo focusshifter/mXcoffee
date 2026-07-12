@@ -15,7 +15,7 @@ use ble_server::MxBleServer;
 use display_interface::FastSpiInterface;
 
 use embedded_graphics::pixelcolor::Rgb565;
-use embedded_graphics::prelude::RgbColor;
+use embedded_graphics::prelude::{IntoStorage, RgbColor};
 use esp_idf_hal::delay::{FreeRtos, TickType};
 use esp_idf_hal::gpio::PinDriver;
 use esp_idf_hal::i2c::{I2cConfig, I2cDriver};
@@ -54,6 +54,42 @@ const REFRESH_INTERVAL_MS: u64 = 20;
 const DISPLAY_SPI_HZ: u32 = 40_000_000;
 const DISPLAY_TRANSFER_BUFFER_SIZE: usize = 8 * 1024;
 type OwnedFrameBuffer = Box<[Rgb565; PIXEL_COUNT]>;
+
+fn capture_frame_to_serial(framebuffer: &[Rgb565; PIXEL_COUNT]) {
+    const RAW_LINE_BYTES: usize = 72;
+    let mut raw = [0u8; RAW_LINE_BYTES];
+    let mut encoded = [0u8; 96];
+    let mut used = 0;
+
+    println!(
+        "SCREENSHOT_RGB565_BEGIN:{}:{}:{}",
+        DISPLAY_WIDTH,
+        DISPLAY_HEIGHT,
+        PIXEL_COUNT * 2
+    );
+    for pixel in framebuffer {
+        let bytes = pixel.into_storage().to_le_bytes();
+        raw[used] = bytes[0];
+        raw[used + 1] = bytes[1];
+        used += 2;
+        if used == raw.len() {
+            let len = mxcoffee::screenshot::encode_base64(&raw, &mut encoded).unwrap();
+            println!(
+                "SCREENSHOT_RGB565_DATA:{}",
+                core::str::from_utf8(&encoded[..len]).unwrap()
+            );
+            used = 0;
+        }
+    }
+    if used > 0 {
+        let len = mxcoffee::screenshot::encode_base64(&raw[..used], &mut encoded).unwrap();
+        println!(
+            "SCREENSHOT_RGB565_DATA:{}",
+            core::str::from_utf8(&encoded[..len]).unwrap()
+        );
+    }
+    println!("SCREENSHOT_RGB565_END");
+}
 
 struct PressureSample {
     pressure_mbar: i16,
@@ -598,12 +634,20 @@ fn main() {
     let mut soak_completed = false;
     let mut pressure = 0i16;
     let mut pressure_hex = String::new();
+    let mut button_a_pressed_at = None;
+    let mut screenshot_requested = false;
+    let mut screenshot_at_ms =
+        cfg!(feature = "screenshot-on-boot").then(|| now_ms().saturating_add(12_000));
 
     loop {
         #[cfg(feature = "benchmark")]
         let pipeline_started_us = display_interface::monotonic_time_us();
         let now = now_ms();
         let frame_start = now;
+        if screenshot_at_ms.is_some_and(|capture_at| now >= capture_at) {
+            screenshot_requested = true;
+            screenshot_at_ms = None;
+        }
 
         while let Ok(sample) = pressure_rx.try_recv() {
             pressure = sample.pressure_mbar;
@@ -646,6 +690,16 @@ fn main() {
         }
 
         if buttons.is_pressed(Button::A) {
+            button_a_pressed_at = Some(now);
+        }
+        if buttons.held[0]
+            && button_a_pressed_at.is_some_and(|pressed_at| now.saturating_sub(pressed_at) >= 1_000)
+        {
+            screenshot_requested = true;
+            button_a_pressed_at = None;
+            println!("Screenshot requested");
+        }
+        if !buttons.held[0] && button_a_pressed_at.take().is_some() {
             state.debug_mode = !state.debug_mode;
         }
 
@@ -811,6 +865,11 @@ fn main() {
         }
         #[cfg(feature = "benchmark")]
         let exchange_started_us = display_interface::monotonic_time_us();
+
+        if screenshot_requested {
+            screenshot_requested = false;
+            capture_frame_to_serial(&framebuffer);
+        }
 
         framebuffer = exchange_frame(&frame_tx, &available_rx, framebuffer);
         #[cfg(feature = "benchmark")]

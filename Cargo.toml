@@ -26,6 +26,7 @@ benchmark = []
 benchmark-soak = ["benchmark"]
 benchmark-transfer-soak = ["benchmark"]
 poweroff-test = []
+screenshot-on-boot = []
 demo = []
 
 [dependencies]

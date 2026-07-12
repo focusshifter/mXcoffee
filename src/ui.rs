@@ -54,6 +54,42 @@ pub struct UiData<'a> {
     pub frame_indicator: bool,
 }
 
+struct Scale2x<'a, T> {
+    target: &'a mut T,
+}
+
+impl<T> Dimensions for Scale2x<'_, T>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    fn bounding_box(&self) -> Rectangle {
+        let bounds = self.target.bounding_box();
+        Rectangle::new(
+            bounds.top_left / 2,
+            Size::new(bounds.size.width / 2, bounds.size.height / 2),
+        )
+    }
+}
+
+impl<T> DrawTarget for Scale2x<'_, T>
+where
+    T: DrawTarget<Color = Rgb565>,
+{
+    type Color = Rgb565;
+    type Error = T::Error;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Pixel<Self::Color>>,
+    {
+        for Pixel(point, color) in pixels {
+            self.target
+                .fill_solid(&Rectangle::new(point * 2, Size::new(2, 2)), color)?;
+        }
+        Ok(())
+    }
+}
+
 pub fn draw_main_screen<T>(target: &mut T, data: UiData<'_>) -> Result<(), T::Error>
 where
     T: DrawTarget<Color = Rgb565>,
@@ -136,10 +172,11 @@ where
         Rectangle::new(Point::new(x + 2, 18), Size::new(96, 60))
             .into_styled(PrimitiveStyle::with_fill(ACCENT_TEXT))
             .draw(target)?;
-        Text::new(
+        Text::with_text_style(
             header,
-            Point::new(x + 2, 3),
+            Point::new(x + 2, 2),
             MonoTextStyle::new(&FONT_6X10, ACCENT_TEXT),
+            TextStyleBuilder::new().baseline(Baseline::Top).build(),
         )
         .draw(target)?;
     }
@@ -156,7 +193,6 @@ where
             .draw(target)?;
     }
 
-    let large = MonoTextStyle::new(&FONT_9X18_BOLD, PANEL_TEXT);
     let normal = MonoTextStyle::new(&FONT_10X20, PANEL_TEXT);
     let small = MonoTextStyle::new(&FONT_6X10, PANEL_TEXT);
 
@@ -168,7 +204,13 @@ where
         data.shot_time_tenths % 10
     )
     .ok();
-    Text::with_alignment(&value, Point::new(92, 40), large, Alignment::Right).draw(target)?;
+    Text::with_alignment(
+        &value,
+        Point::new(46, 31),
+        MonoTextStyle::new(&FONT_9X18_BOLD, PANEL_TEXT),
+        Alignment::Right,
+    )
+    .draw(&mut Scale2x { target })?;
 
     value.clear();
     write!(&mut value, "{:.1}g", data.shot_weight).ok();
@@ -185,7 +227,13 @@ where
         (data.last_pressure.max(0) % 1_000) / 100
     )
     .ok();
-    Text::with_alignment(&value, Point::new(312, 40), large, Alignment::Right).draw(target)?;
+    Text::with_alignment(
+        &value,
+        Point::new(156, 31),
+        MonoTextStyle::new(&FONT_9X18_BOLD, PANEL_TEXT),
+        Alignment::Right,
+    )
+    .draw(&mut Scale2x { target })?;
     Ok(())
 }
 
@@ -212,7 +260,13 @@ where
     } else {
         scale.push_str("SCALE: --").ok();
     }
-    Text::with_alignment(&scale, Point::new(316, 224), style, Alignment::Right).draw(target)?;
+    Text::with_text_style(
+        &scale,
+        Point::new(123, 224),
+        style,
+        TextStyleBuilder::new().baseline(Baseline::Top).build(),
+    )
+    .draw(target)?;
     Ok(())
 }
 

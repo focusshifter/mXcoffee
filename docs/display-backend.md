@@ -207,6 +207,28 @@ no demo or benchmark features. Physical pressure validation is intentionally
 deferred until the sensor is available; final on-device visual/touch approval
 and a real scale weight notification are still operator-observed gates.
 
+## Live Screenshot Capture
+
+Hold button A for at least one second to stream the framebuffer currently being
+rendered. A short A press still toggles the debug overlay. The firmware emits
+the exact 320x240 RGB565 buffer as prefixed Base64 lines between
+`SCREENSHOT_RGB565_BEGIN` and `SCREENSHOT_RGB565_END`; prefixes prevent BLE,
+sensor, or benchmark logs from corrupting extraction.
+
+Capture serial output and reconstruct the latest complete frame with:
+
+```sh
+espflash monitor --port /dev/ttyACM0 --baud 115200 \
+  --elf target/xtensa-esp32-espidf/release/mxcoffee | tee screenshot.log
+tools/extract_screenshot.py screenshot.log -o screenshot.bmp
+```
+
+The extractor validates the raw byte count and converts RGB565 to a standard
+24-bit BMP. The diagnostic `screenshot-on-boot` feature requests a capture 12
+seconds after startup, allowing unattended capture of a populated demo graph
+after a serial reset.
+No SPIFFS partition or C++ screenshot wrapper is involved.
+
 ## Diagnostic Builds
 
 - `--features benchmark` prints full-frame, render, pipeline, worker-upload,

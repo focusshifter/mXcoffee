@@ -6,5 +6,6 @@ pub mod display_dma;
 pub mod fast_framebuffer;
 pub mod graph;
 pub mod scale_protocol;
+pub mod screenshot;
 pub mod session;
 pub mod ui;
