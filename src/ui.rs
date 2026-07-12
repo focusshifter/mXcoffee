@@ -378,70 +378,55 @@ where
             GRAPH_Y + GRAPH_HEIGHT - value * GRAPH_HEIGHT / max_value,
         )
     };
+    if antialias {
+        return draw_antialiased_polyline(target, count, point, color);
+    }
+
     let mut previous = point(0);
     for index in 1..count {
         let current = point(index);
-        if antialias {
-            draw_antialiased_line(target, previous, current, color)?;
-        } else {
-            draw_m5_line(target, previous, current, color)?;
-        }
+        draw_m5_line(target, previous, current, color)?;
         previous = current;
     }
     Ok(())
 }
 
-fn draw_antialiased_line<T>(
+fn draw_antialiased_polyline<T, F>(
     target: &mut T,
-    mut start: Point,
-    mut end: Point,
+    count: usize,
+    point: F,
     color: Rgb565,
 ) -> Result<(), T::Error>
 where
     T: DrawTarget<Color = Rgb565>,
+    F: Fn(usize) -> Point,
 {
-    let steep = (end.y - start.y).abs() > (end.x - start.x).abs();
-    if steep {
-        core::mem::swap(&mut start.x, &mut start.y);
-        core::mem::swap(&mut end.x, &mut end.y);
-    }
-    if start.x > end.x {
-        core::mem::swap(&mut start, &mut end);
-    }
-    let delta_x = end.x - start.x;
-    if delta_x == 0 {
-        let point = if steep {
-            Point::new(start.y, start.x)
-        } else {
-            start
-        };
-        return target.draw_iter([Pixel(point, color)]);
-    }
+    const NEIGHBORS: [(i32, i32); 8] = [
+        (-1, -1),
+        (0, -1),
+        (1, -1),
+        (-1, 0),
+        (1, 0),
+        (-1, 1),
+        (0, 1),
+        (1, 1),
+    ];
 
-    let gradient = ((end.y - start.y) << 16) / delta_x;
-    let mut y_fixed = start.y << 16;
-    for x in start.x..=end.x {
-        let base_y = y_fixed.div_euclid(1 << 16);
-        let fraction = y_fixed.rem_euclid(1 << 16) as u32;
-        let adjacent_alpha = ((fraction * 255) >> 16) as u8;
-        let base_alpha = 255 - adjacent_alpha;
-        let point = |y| {
-            if steep {
-                Point::new(y, x)
-            } else {
-                Point::new(x, y)
-            }
-        };
-        target.draw_iter(
-            [
-                Some(Pixel(point(base_y), blend_graph_pixel(color, base_alpha))),
-                (adjacent_alpha > 0)
-                    .then(|| Pixel(point(base_y + 1), blend_graph_pixel(color, adjacent_alpha))),
-            ]
-            .into_iter()
-            .flatten(),
-        )?;
-        y_fixed += gradient;
+    let fringe = blend_graph_pixel(color, 72);
+    let mut previous = point(0);
+    for index in 1..count {
+        let current = point(index);
+        for (x, y) in NEIGHBORS {
+            let offset = Point::new(x, y);
+            draw_m5_line(target, previous + offset, current + offset, fringe)?;
+        }
+        previous = current;
+    }
+    previous = point(0);
+    for index in 1..count {
+        let current = point(index);
+        draw_m5_line(target, previous, current, color)?;
+        previous = current;
     }
     Ok(())
 }
@@ -751,6 +736,42 @@ mod tests {
         assert!(pixels
             .iter()
             .any(|pixel| *pixel != DARK_BG && *pixel != GRAPH_GOOD));
+    }
+
+    #[test]
+    fn antialiased_polyline_is_stable_under_one_pixel_shift() {
+        let points = [
+            Point::new(30, 195),
+            Point::new(82, 126),
+            Point::new(146, 158),
+            Point::new(230, 108),
+        ];
+        let mut original = [DARK_BG; WIDTH as usize * HEIGHT as usize];
+        let mut shifted = [DARK_BG; WIDTH as usize * HEIGHT as usize];
+        draw_antialiased_polyline(
+            &mut FastFrameBuffer::new(&mut original, WIDTH as usize, HEIGHT as usize),
+            points.len(),
+            |index| points[index],
+            GRAPH_GOOD,
+        )
+        .unwrap();
+        draw_antialiased_polyline(
+            &mut FastFrameBuffer::new(&mut shifted, WIDTH as usize, HEIGHT as usize),
+            points.len(),
+            |index| points[index] + Point::new(1, 0),
+            GRAPH_GOOD,
+        )
+        .unwrap();
+
+        for y in 0..HEIGHT as usize {
+            for x in 0..WIDTH as usize - 1 {
+                assert_eq!(
+                    original[y * WIDTH as usize + x],
+                    shifted[y * WIDTH as usize + x + 1],
+                    "translation mismatch at ({x}, {y})"
+                );
+            }
+        }
     }
 
     #[test]

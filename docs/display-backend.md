@@ -254,14 +254,33 @@ pixel equality with the C++ screenshot oracle. The 2026-07-12 parity result is
 RMSE `0 (0)` across the complete 320x240 frame. The static oracle omits the
 Rust runtime's 4x4 blinking frame heartbeat; runtime screenshots retain it.
 
-Normal firmware antialiases the two graph traces with fixed-point two-pixel
-coverage blended into the RGB565 background. The C++ reference renderer keeps
-M5GFX's aliased line algorithm, allowing the original dashboard to remain an
-exact `RMSE 0 (0)` regression oracle. On the Core2, antialiasing changed the
-post-capture populated-frame mean from 25.79 ms (38.78 FPS) to 27.67 ms (36.14
-FPS); the isolated full-frame upload remained 31.58 FPS. The corresponding
+Normal firmware antialiases the two graph traces by drawing a uniform dim
+eight-neighbor fringe before the original one-pixel M5 core. The fringe is
+independent of segment angle, and a regression test requires an angled trace
+moved by one pixel to produce the exact same raster moved by one pixel. The C++
+reference renderer keeps M5GFX's aliased line algorithm, allowing the original
+dashboard to remain an exact `RMSE 0 (0)` regression oracle. On the Core2, the
+accepted renderer has a 21.35 ms median UI render and 36.48 FPS mean pipelined
+cadence; isolated full-frame upload remains 31.53 FPS. The corresponding
 physical framebuffer is
 `benchmarks/screenshots/2026-07-12-live-demo-aa.png`.
+
+## Native UI Simulator
+
+The dashboard, splash, demo pressure model, simulated scale, session timer, and
+history pipeline run natively on the development host without ESP emulation:
+
+```sh
+cargo +stable run --example ui_simulator --target x86_64-unknown-linux-gnu
+```
+
+The minifb dependency is host-only and does not enter firmware builds. The
+window renders the same `FastFrameBuffer`, `draw_splash`, and
+`draw_main_screen_retained` code used on the Core2 at 50 FPS and 2x initial
+scale. Controls are `D` for the debug overlay, `B` for Bluetooth status, `A` to
+compare aliased and antialiased graphs, `Space` to pause, `R` to restart the
+simulated shot, and `Esc` to quit. The shot automatically repeats every 40
+seconds.
 
 ## Diagnostic Builds
 

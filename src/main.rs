@@ -60,6 +60,7 @@ fn capture_frame_to_serial(framebuffer: &[Rgb565; PIXEL_COUNT]) {
     let mut raw = [0u8; RAW_LINE_BYTES];
     let mut encoded = [0u8; 96];
     let mut used = 0;
+    let mut lines = 0u16;
 
     println!(
         "SCREENSHOT_RGB565_BEGIN:{}:{}:{}",
@@ -78,6 +79,10 @@ fn capture_frame_to_serial(framebuffer: &[Rgb565; PIXEL_COUNT]) {
                 "SCREENSHOT_RGB565_DATA:{}",
                 core::str::from_utf8(&encoded[..len]).unwrap()
             );
+            lines += 1;
+            if lines % 32 == 0 {
+                FreeRtos::delay_ms(1);
+            }
             used = 0;
         }
     }

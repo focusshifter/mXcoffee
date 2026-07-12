@@ -49,3 +49,6 @@ enumset = "1.1"
 
 [build-dependencies]
 embuild = { version = "0.33", features = ["espidf"] }
+
+[target.'cfg(not(target_os = "espidf"))'.dev-dependencies]
+minifb = "0.28.0"
