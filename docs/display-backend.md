@@ -196,7 +196,16 @@ The production inactivity timeout remains ten minutes and now follows the C++
 firmware's AXP2101 shutdown behavior instead of merely blanking the backlight.
 The `poweroff-test` feature shortens only that timeout to 15 seconds. On the
 physical Core2 it removed power and disconnected USB at the expected timeout;
-physical power-button wake still requires operator confirmation.
+power-button wake was verified in the following production-flash cycle.
+
+The same device subsequently returned on USB after its physical power button
+was pressed, proving the wake path. The current 30-second graph cadence ran for
+more than two minutes in demo mode without a reset or display error before a
+freshly erased application partition was restored with the normal production
+firmware. That production image booted cleanly with the ten-minute timeout and
+no demo or benchmark features. Physical pressure validation is intentionally
+deferred until the sensor is available; final on-device visual/touch approval
+and a real scale weight notification are still operator-observed gates.
 
 ## Diagnostic Builds
 
