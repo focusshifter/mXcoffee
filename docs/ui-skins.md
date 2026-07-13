@@ -174,9 +174,10 @@ submit measured 20.975 ms (47.67 FPS), and completed LCD cadence measured
 32.532 ms (30.73 FPS). Raw measurements are in
 `benchmarks/results/2026-07-13-alchemy-png-40mhz.jsonl`.
 
-The NGE skin uses the same authored-underlay pipeline for a dense original
+The NGE skin uses the same authored-underlay pipeline for a bold asymmetric
 coffee telemetry display inspired by 1990s anime command interfaces. Static
-frames, labels, ticks, and texture live in `assets/skins/nge-underlay.png`;
+color fields, labels, calibration ticks, and framing live in
+`assets/skins/nge-underlay.png`;
 pressure, weight, flow, time, both graph curves, pressure fill, and connection
 states remain live firmware overlays. Its compensated device payload is
 `assets/skins/nge-underlay.rgb565`, generated with:
@@ -190,7 +191,12 @@ The deterministic host reference is
 `benchmarks/screenshots/2026-07-13-nge-skin-raw.png`. In the simulator, press
 `S` to cycle Classic, Workshop, Alchemy, and NGE.
 
-On the Core2, NGE dynamic rendering measured 13.039 ms (76.69 FPS), pipelined
-submit measured 17.972 ms (55.64 FPS), and completed LCD cadence measured
-31.817 ms (31.42 FPS), with zero display errors. Raw measurements are in
-`benchmarks/results/2026-07-13-nge-40mhz.jsonl`.
+The initial card-grid NGE round measured 13.039 ms dynamic rendering (76.69
+FPS), 17.972 ms pipelined submit (55.64 FPS), and 31.817 ms LCD cadence (31.42
+FPS). It was rejected visually and its measurements remain in
+`benchmarks/results/2026-07-13-nge-40mhz.jsonl` for comparison.
+
+The replacement asymmetric round measured 12.380 ms dynamic rendering (80.77
+FPS), 18.009 ms pipelined submit (55.52 FPS), and 31.743 ms LCD cadence (31.50
+FPS), with zero display or pattern-correctness errors. Its measurements are in
+`benchmarks/results/2026-07-13-nge-v2-40mhz.jsonl`.

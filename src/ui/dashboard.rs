@@ -256,7 +256,7 @@ where
     let mut scale: String<40> = String::new();
     if data.scale_connected {
         if matches!(skin.chrome, ChromeStyle::AuthoredUnderlay(_)) {
-            scale.push_str("LINKED").ok();
+            scale.push_str("OK").ok();
         } else if matches!(skin.chrome, ChromeStyle::Alchemy(_)) {
             scale.push_str("SCALE LINKED").ok();
         } else {

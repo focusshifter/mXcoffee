@@ -336,7 +336,7 @@ mod tests {
         );
         assert_eq!(
             framebuffer_checksum(&render_reference(&NGE)),
-            8_731_270_326_801_396_832
+            2_602_705_410_438_554_612
         );
     }
 
