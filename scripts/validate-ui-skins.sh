@@ -7,7 +7,8 @@ classic=$(mktemp --suffix=.bmp)
 workshop=$(mktemp --suffix=.bmp)
 alchemy=$(mktemp --suffix=.bmp)
 nge=$(mktemp --suffix=.bmp)
-trap 'rm -f "$classic" "$workshop" "$alchemy" "$nge"' EXIT
+lcars=$(mktemp --suffix=.bmp)
+trap 'rm -f "$classic" "$workshop" "$alchemy" "$nge" "$lcars"' EXIT
 
 cd "$repo_root"
 cargo +stable test --lib --target "$target" 'ui::tests::skin_'
@@ -21,6 +22,8 @@ cargo +stable run --quiet --release --target "$target" \
   --example render_ui_reference -- "$alchemy" --alchemy --aa
 cargo +stable run --quiet --release --target "$target" \
   --example render_ui_reference -- "$nge" --nge --aa
+cargo +stable run --quiet --release --target "$target" \
+  --example render_ui_reference -- "$lcars" --lcars --aa
 
 comparison=$(compare -metric RMSE \
   benchmarks/screenshots/rust-reference.bmp "$classic" null: 2>&1 || true)
@@ -33,4 +36,5 @@ echo "classic_sha256=$(sha256sum "$classic" | cut -d' ' -f1)"
 echo "workshop_sha256=$(sha256sum "$workshop" | cut -d' ' -f1)"
 echo "alchemy_sha256=$(sha256sum "$alchemy" | cut -d' ' -f1)"
 echo "nge_sha256=$(sha256sum "$nge" | cut -d' ' -f1)"
+echo "lcars_sha256=$(sha256sum "$lcars" | cut -d' ' -f1)"
 echo "skin validation passed"

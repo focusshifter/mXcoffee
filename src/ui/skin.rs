@@ -1,5 +1,9 @@
-use super::layout::{DashboardLayout, ALCHEMY_LAYOUT, CLASSIC_LAYOUT, NGE_LAYOUT, WORKSHOP_LAYOUT};
-use super::theme::{SkinColor, Theme, ALCHEMY_THEME, CLASSIC_THEME, NGE_THEME, WORKSHOP_THEME};
+use super::layout::{
+    DashboardLayout, ALCHEMY_LAYOUT, CLASSIC_LAYOUT, LCARS_LAYOUT, NGE_LAYOUT, WORKSHOP_LAYOUT,
+};
+use super::theme::{
+    SkinColor, Theme, ALCHEMY_THEME, CLASSIC_THEME, LCARS_THEME, NGE_THEME, WORKSHOP_THEME,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SkinId {
@@ -7,6 +11,7 @@ pub enum SkinId {
     Workshop,
     Alchemy,
     Nge,
+    Lcars,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -171,6 +176,26 @@ pub const NGE: Skin = Skin {
     },
     chrome: ChromeStyle::AuthoredUnderlay(UnderlayChrome {
         grid: SkinColor::new(24, 70, 45),
+    }),
+    panel_headers: ["", "", ""],
+};
+
+pub const LCARS: Skin = Skin {
+    id: SkinId::Lcars,
+    name: "LCARS",
+    theme: LCARS_THEME,
+    layout: LCARS_LAYOUT,
+    assets: SkinAssets {
+        fonts: MOON_GLOSS_FONTS,
+        backdrop: Some(FullScreenAsset {
+            width: 320,
+            height: 240,
+            rgb565_be: include_bytes!("../../assets/skins/lcars-underlay.rgb565"),
+        }),
+        decorations: &[],
+    },
+    chrome: ChromeStyle::AuthoredUnderlay(UnderlayChrome {
+        grid: SkinColor::new(55, 39, 79),
     }),
     panel_headers: ["", "", ""],
 };

@@ -5,8 +5,8 @@ use embedded_graphics::prelude::RgbColor;
 use mxcoffee::fast_framebuffer::FastFrameBuffer;
 use mxcoffee::ui::{
     build_reference_histories, draw_main_screen_retained_with_skin,
-    initialize_main_screen_with_skin, Skin, UiData, ALCHEMY, CLASSIC, HEIGHT, HISTORY_LEN, NGE,
-    WIDTH, WORKSHOP,
+    initialize_main_screen_with_skin, Skin, UiData, ALCHEMY, CLASSIC, HEIGHT, HISTORY_LEN, LCARS,
+    NGE, WIDTH, WORKSHOP,
 };
 
 const WARMUP: usize = 20;
@@ -17,6 +17,7 @@ fn main() {
     benchmark(&WORKSHOP);
     benchmark(&ALCHEMY);
     benchmark(&NGE);
+    benchmark(&LCARS);
 }
 
 fn benchmark(skin: &Skin) {

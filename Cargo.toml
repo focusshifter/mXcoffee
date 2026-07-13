@@ -31,6 +31,7 @@ screenshot-on-boot = []
 demo = []
 alchemy-skin = []
 nge-skin = []
+lcars-skin = []
 
 [dependencies]
 embedded-graphics = "0.8.1"

@@ -123,3 +123,24 @@ pub const NGE_THEME: Theme = Theme {
         high: SkinColor::new(216, 22, 8),
     },
 };
+
+pub const LCARS_THEME: Theme = Theme {
+    screen: SkinColor::new(2, 0, 4),
+    panel: SkinColor::new(184, 72, 57),
+    panel_inner: SkinColor::new(2, 0, 4),
+    panel_text: SkinColor::new(224, 139, 44),
+    panel_label: SkinColor::new(26, 6, 9),
+    graph_pressure: SkinColor::new(137, 101, 177),
+    graph_warning: SkinColor::new(214, 91, 70),
+    status_text: SkinColor::new(224, 139, 44),
+    splash_text: SkinColor::new(224, 139, 44),
+    splash_bean: SkinColor::new(126, 65, 150),
+    splash_mark: SkinColor::new(214, 91, 70),
+    pressure_scale: PressureScaleTheme {
+        low: SkinColor::new(48, 37, 76),
+        low_peak: SkinColor::new(92, 70, 127),
+        good: SkinColor::new(137, 101, 177),
+        warning: SkinColor::new(224, 139, 44),
+        high: SkinColor::new(214, 91, 70),
+    },
+};

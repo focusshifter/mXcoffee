@@ -9,16 +9,25 @@ pub mod skin;
 mod splash;
 pub mod theme;
 
-pub use skin::{Skin, SkinId, ALCHEMY, CLASSIC, NGE, WORKSHOP};
+pub use skin::{Skin, SkinId, ALCHEMY, CLASSIC, LCARS, NGE, WORKSHOP};
 
-#[cfg(all(feature = "alchemy-skin", feature = "nge-skin"))]
+#[cfg(any(
+    all(feature = "alchemy-skin", feature = "nge-skin"),
+    all(feature = "alchemy-skin", feature = "lcars-skin"),
+    all(feature = "nge-skin", feature = "lcars-skin")
+))]
 compile_error!("select only one default skin feature");
 
-#[cfg(all(feature = "alchemy-skin", not(feature = "nge-skin")))]
+#[cfg(all(
+    feature = "alchemy-skin",
+    not(any(feature = "nge-skin", feature = "lcars-skin"))
+))]
 pub const DEFAULT_SKIN: &Skin = &ALCHEMY;
-#[cfg(feature = "nge-skin")]
+#[cfg(all(feature = "nge-skin", not(feature = "lcars-skin")))]
 pub const DEFAULT_SKIN: &Skin = &NGE;
-#[cfg(not(any(feature = "alchemy-skin", feature = "nge-skin")))]
+#[cfg(feature = "lcars-skin")]
+pub const DEFAULT_SKIN: &Skin = &LCARS;
+#[cfg(not(any(feature = "alchemy-skin", feature = "nge-skin", feature = "lcars-skin")))]
 pub const DEFAULT_SKIN: &Skin = &CLASSIC;
 
 use dashboard::{
@@ -299,7 +308,7 @@ mod tests {
 
     #[test]
     fn skin_definitions_are_valid_and_distinct() {
-        for skin in [&CLASSIC, &WORKSHOP, &ALCHEMY, &NGE] {
+        for skin in [&CLASSIC, &WORKSHOP, &ALCHEMY, &NGE, &LCARS] {
             assert!(skin.layout.is_valid(WIDTH, HEIGHT));
             assert!(skin.assets.backdrop.is_none_or(|asset| {
                 asset.is_valid()
@@ -318,6 +327,8 @@ mod tests {
         assert_ne!(WORKSHOP.layout, ALCHEMY.layout);
         assert_ne!(ALCHEMY.theme, NGE.theme);
         assert_ne!(ALCHEMY.layout, NGE.layout);
+        assert_ne!(NGE.theme, LCARS.theme);
+        assert_ne!(NGE.layout, LCARS.layout);
     }
 
     #[test]
@@ -337,6 +348,10 @@ mod tests {
         assert_eq!(
             framebuffer_checksum(&render_reference(&NGE)),
             2_602_705_410_438_554_612
+        );
+        assert_eq!(
+            framebuffer_checksum(&render_reference(&LCARS)),
+            4_837_969_127_344_024_939
         );
     }
 
@@ -553,6 +568,20 @@ mod tests {
             &mut FastFrameBuffer::new(&mut switched, WIDTH as usize, HEIGHT as usize),
             reference_data(&pressure, &weight, &times, false),
             &NGE,
+        )
+        .unwrap();
+        assert_eq!(switched, expected);
+
+        let expected = render_reference(&LCARS);
+        initialize_main_screen_with_skin(
+            &mut FastFrameBuffer::new(&mut switched, WIDTH as usize, HEIGHT as usize),
+            &LCARS,
+        )
+        .unwrap();
+        draw_main_screen_retained_with_skin(
+            &mut FastFrameBuffer::new(&mut switched, WIDTH as usize, HEIGHT as usize),
+            reference_data(&pressure, &weight, &times, false),
+            &LCARS,
         )
         .unwrap();
         assert_eq!(switched, expected);

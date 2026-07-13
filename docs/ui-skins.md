@@ -21,8 +21,9 @@ firmware. The implementation is split by responsibility:
 argument delegate to it, so firmware behavior cannot change merely because a
 new skin is added.
 
-Build with `--features alchemy-skin` to select Alchemy as the firmware default
-or `--features nge-skin` to select the NGE-inspired telemetry skin. The skin
+Build with `--features alchemy-skin` to select Alchemy as the firmware default,
+`--features nge-skin` for the NGE-inspired telemetry skin, or
+`--features lcars-skin` for the LCARS-inspired control surface. The skin
 features are mutually exclusive.
 without changing the normal production configuration.
 
@@ -200,3 +201,23 @@ The replacement asymmetric round measured 12.380 ms dynamic rendering (80.77
 FPS), 18.009 ms pipelined submit (55.52 FPS), and 31.743 ms LCD cadence (31.50
 FPS), with zero display or pattern-correctness errors. Its measurements are in
 `benchmarks/results/2026-07-13-nge-v2-40mhz.jsonl`.
+
+The LCARS skin is an original coffee control surface using broad connected
+rails, pill-ended tabs, and a coral/orange/lavender palette. Static chrome and
+labels live in `assets/skins/lcars-underlay.png`; pressure, weight, flow, time,
+both graph curves, gauge fill, and connection states remain live overlays. The
+compensated device payload is generated with:
+
+```sh
+tools/png_to_rgb565.py --width 320 --height 240 --core2-compensate \
+  assets/skins/lcars-underlay.png assets/skins/lcars-underlay.rgb565
+```
+
+The deterministic host reference is
+`benchmarks/screenshots/2026-07-13-lcars-skin-raw.png`. In the simulator, press
+`S` to cycle Classic, Workshop, Alchemy, NGE, and LCARS.
+
+On the Core2, LCARS round one measured 13.259 ms dynamic rendering (75.42
+FPS), 28.999 ms pipelined submit (34.48 FPS), and 31.572 ms completed LCD
+cadence (31.67 FPS), with zero display or pattern-correctness errors. Raw
+measurements are in `benchmarks/results/2026-07-13-lcars-v1-40mhz.jsonl`.

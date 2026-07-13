@@ -203,6 +203,43 @@ pub const NGE_LAYOUT: DashboardLayout = DashboardLayout {
     frame_indicator: RectSpec::new(316, 236, 4, 4),
 };
 
+pub const LCARS_LAYOUT: DashboardLayout = DashboardLayout {
+    panels: [
+        PanelLayout {
+            frame: RectSpec::new(50, 14, 120, 77),
+            inner: RectSpec::new(53, 26, 114, 62),
+            header: Point::new(53, 15),
+            value_right: 162,
+            value_y: 50,
+        },
+        PanelLayout {
+            frame: RectSpec::new(171, 14, 73, 77),
+            inner: RectSpec::new(174, 26, 67, 62),
+            header: Point::new(174, 15),
+            value_right: 237,
+            value_y: 45,
+        },
+        PanelLayout {
+            frame: RectSpec::new(245, 14, 73, 77),
+            inner: RectSpec::new(248, 26, 67, 62),
+            header: Point::new(248, 15),
+            value_right: 311,
+            value_y: 50,
+        },
+    ],
+    graph: GraphLayout {
+        plot: RectSpec::new(54, 110, 178, 83),
+        clear: RectSpec::new(54, 110, 178, 83),
+    },
+    pressure_bar: RectSpec::new(25, 64, 12, 132),
+    status: RectSpec::new(233, 205, 37, 23),
+    status_secondary: Some(RectSpec::new(274, 205, 42, 23)),
+    status_left: Point::new(244, 207),
+    status_right: Point::new(309, 207),
+    debug_origin: Point::new(56, 112),
+    frame_indicator: RectSpec::new(316, 236, 4, 4),
+};
+
 impl DashboardLayout {
     pub fn is_valid(self, screen_width: i32, screen_height: i32) -> bool {
         let inside = |rect: RectSpec| {

@@ -318,6 +318,10 @@ graph, pressure, and status regions. The NGE skin is selected with
 `--features nge-skin`; its host reference is
 `benchmarks/screenshots/2026-07-13-nge-skin-raw.png`.
 
+The LCARS skin uses the same retained-underlay path and is selected with
+`--features lcars-skin`. Its host reference is
+`benchmarks/screenshots/2026-07-13-lcars-skin-raw.png`.
+
 The Alchemy skin uses a generated 320x240 PNG underlay converted at build time
 to a 153,600-byte RGB565 payload. On the physical Core2 its dynamic render was
 15.213 ms (65.73 FPS), pipelined submit was 20.975 ms (47.67 FPS), and completed
